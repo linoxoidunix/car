@@ -1057,3 +1057,75 @@ function parseTimes(s) {
   return String(s).split(",").map((x) => +x.trim()).filter((x) => isFinite(x));
 }
 
+// ===========================================================================
+// Запуск расчёта (Analyze)
+// ===========================================================================
+function setStatus(msg, kind) { const e = $("status"); e.textContent = msg; e.className = "status" + (kind ? " " + kind : ""); }
+
+async function analyze() {
+  let payload;
+  if ($("tab-json").classList.contains("active")) {
+    try { payload = JSON.parse($("input").value); }
+    catch (e) { setStatus("некорректный JSON: " + e.message, "err"); return; }
+  } else {
+    const { req, errs } = graphToRequest();
+    if (errs.length) { showError("Схема неполна:\n• " + errs.join("\n• ")); setStatus("исправьте схему", "err"); return; }
+    payload = req;
+    $("input").value = JSON.stringify(req, null, 2);   // keep JSON tab in sync
+  }
+  openDrawer();
+  setStatus("расчёт…");
+  $("analyze").disabled = true;
+  const t0 = performance.now();
+  try {
+    const r = await fetch("/api/analyze", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+    if (!r.ok) { showError(data.error || "HTTP " + r.status); setStatus("ошибка расчёта", "err"); return; }
+    renderResponse(data);
+    setStatus("готово за " + Math.round(performance.now() - t0) + " мс", "ok");
+  } catch (e) { setStatus("сетевая ошибка: " + e.message, "err"); }
+  finally { $("analyze").disabled = false; }
+}
+
+// ===========================================================================
+// Показ результатов
+// ===========================================================================
+function fmtP(p) { if (p === 0) return "0"; return p >= 1e-3 ? p.toFixed(6) : p.toExponential(4); }
+function showError(msg) { $("results").innerHTML = ""; $("results").append(el("div", { class: "err-box" }, msg)); }
+
+function renderSets(title, report) {
+  if (!report) return null;
+  const box = el("div");
+  box.append(el("h3", {}, `${title} — ${report.count}${report.truncated ? " (усечено)" : ""}`));
+  box.append(el("div", { class: "meta" },
+    `Σ P(набор) ≈ ${fmtP(report.rare_event_approx)} · оценка Эзари–Прошана ${fmtP(report.esary_proschan_bound)}`));
+  const table = el("table");
+  table.append(el("tr", {}, el("th", {}, "Порядок"), el("th", {}, "Элементы"), el("th", {}, "P")));
+  for (const s of report.sets.slice(0, 200)) {
+    const chips = el("td", { class: "chips" });
+    for (const ev of s.events) chips.append(el("span", {}, ev));
+    table.append(el("tr", {}, el("td", { class: "num" }, String(s.order)), chips, el("td", { class: "num" }, fmtP(s.probability))));
+  }
+  box.append(table);
+  return box;
+}
+function renderResponse(resp) {
+  const out = $("results"); out.textContent = "";
+  out.append(el("h2", {}, resp.interpretation));
+  if (resp.results.length === 1) out.append(el("div", { class: "kpi" }, fmtP(resp.results[0].top_probability)));
+  const table = el("table");
+  table.append(el("tr", {}, el("th", {}, "Время"), el("th", {}, "Вероятность")));
+  for (const r of resp.results)
+    table.append(el("tr", {}, el("td", { class: "num" }, String(r.time)), el("td", { class: "num" }, fmtP(r.top_probability))));
+  out.append(table);
+  const cuts = renderSets("Минимальные сечения (МНС)", resp.cut_sets); if (cuts) out.append(cuts);
+  const paths = renderSets("Минимальные пути (МНП)", resp.path_sets); if (paths) out.append(paths);
+  for (const w of resp.warnings || []) out.append(el("p", { class: "warn" }, "⚠ " + w));
+  const s = resp.stats;
+  out.append(el("div", { class: "meta" },
+    `события: ${s.events} · узлы формулы: ${s.formula_nodes} · модули: ${s.modules} · узлы BDD: ${s.bdd_nodes}` +
+    (s.noncoherent ? " · немонотонная схема" : "")));
+}
+
