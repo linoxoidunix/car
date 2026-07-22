@@ -1,0 +1,52 @@
+# Example front proxy terminating ГОСТ-TLS and asserting user identity.
+#
+# Use an nginx build with ГОСТ crypto (nginx + КриптоПро CSP / OpenSSL-GOST
+# engine, or Angie). This file shows the *shape* of the config; the exact
+# ssl_certificate / engine directives depend on your certified СКЗИ.
+#
+# Security model:
+#   * TLS (ГОСТ) is terminated here by the certified СКЗИ.
+#   * This proxy authenticates the user (here: HTTP Basic against the domain;
+#     in production use Kerberos/SPNEGO via ALD Pro, or auth_request to an SSO).
+#   * It sets X-Remote-User from the authenticated principal and STRIPS any
+#     client-supplied value, so the header cannot be spoofed.
+#   * cra-server trusts this header only from 127.0.0.1 (CRA_TRUSTED_PROXIES).
+
+upstream cra_backend {
+    server 127.0.0.1:8080;
+    keepalive 16;
+}
+
+server {
+    listen 443 ssl;
+    server_name cra.internal;
+
+    # --- ГОСТ-TLS (replace with your certified СКЗИ directives) ----------
+    ssl_certificate     /etc/cra/tls/gost.crt;
+    ssl_certificate_key /etc/cra/tls/gost.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    # ssl_ciphers / engine directives per КриптоПро documentation.
+
+    # --- authentication -------------------------------------------------
+    # Minimal example: HTTP Basic. Prefer domain SSO in production.
+    auth_basic           "CRA";
+    auth_basic_user_file /etc/cra/htpasswd;
+
+    location / {
+        # Never trust an inbound identity header: clear it first.
+        proxy_set_header X-Remote-User "";
+        # Then set it from the authenticated user.
+        proxy_set_header X-Remote-User $remote_user;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_http_version 1.1;
+        proxy_pass http://cra_backend;
+
+        # Analysis of large schemes can take a while.
+        proxy_read_timeout 180s;
+
+        # Bound request size at the edge too.
+        client_max_body_size 64m;
+    }
+}
