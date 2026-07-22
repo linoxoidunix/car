@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Thin HTTP service wrapping the CRA engine"
+description = "Thin HTTP service wrapping the CRA engine, with embedded static frontend"
 
 [[bin]]
 name = "cra-server"
@@ -12,4 +12,5 @@ path = "src/main.rs"
 
 [dependencies]
 cra-core = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
