@@ -781,3 +781,120 @@ function mkAddTransition(from, to) {
   mkRender();
 }
 
+// ---- живой график q(t) (считает тот же бэкенд) ----
+const MKCHART = { pts: [], xmax: 0, geom: null };
+
+function jsClockScale(dist) {
+  switch (dist.type) {
+    case "exponential": return 1 / (dist.rate || 1e-9);
+    case "weibull": return dist.scale;
+    case "gamma": return dist.shape / (dist.rate || 1e-9);
+    case "lognormal": return Math.exp(dist.mu);
+    case "normal": return dist.mean;
+    case "deterministic": return dist.delay;
+    default: return 100;
+  }
+}
+function mkSuggestTmax() {
+  let m = 0;
+  for (const tr of MK.dist.transitions || []) if (tr.dist) m = Math.max(m, jsClockScale(tr.dist));
+  return m > 0 ? m * 3 : 1000;
+}
+function mkPlotStatus(s) { $("mk-plot-status").textContent = s; }
+
+async function mkPlot() {
+  const d = MK.dist;
+  if (!(d.states || []).length) return mkPlotStatus("нет состояний");
+  if (!(d.failed || []).length) return mkPlotStatus("не отмечены отказовые состояния");
+  let xmax = +$("mk-tmax").value;
+  if (!isFinite(xmax) || xmax <= 0) { xmax = mkSuggestTmax(); $("mk-tmax").value = fmtNum(xmax); }
+  const N = 60;
+  const times = [];
+  for (let i = 0; i < N; i++) times.push((xmax * i) / (N - 1));
+  const req = { model: { type: "fault_tree", top: "x", events: [{ id: "x", dist: cleanDist(d) }], gates: [] }, times };
+  mkPlotStatus("расчёт…");
+  try {
+    const r = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req) });
+    const data = await r.json();
+    if (!r.ok) return mkPlotStatus(data.error || "HTTP " + r.status);
+    const pts = data.results.map((x) => ({ t: x.time, q: x.top_probability }));
+    drawQChart(pts, xmax);
+    mkPlotStatus("q(" + fmtNum(xmax) + ") = " + fmtP(pts[pts.length - 1].q));
+  } catch (e) { mkPlotStatus("ошибка: " + e.message); }
+}
+
+function drawQChart(pts, xmax) {
+  const svg = $("mk-chart-svg");
+  const rect = svg.getBoundingClientRect();
+  const W = rect.width, H = rect.height;
+  if (W < 10 || H < 10) { setTimeout(() => drawQChart(pts, xmax), 40); return; }
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.textContent = "";
+  const L = 46, R = 50, T = 12, B = 24;
+  const x = (t) => L + (xmax > 0 ? t / xmax : 0) * (W - L - R);
+  const y = (q) => H - B - q * (H - T - B);
+  MKCHART.pts = pts; MKCHART.xmax = xmax; MKCHART.geom = { L, R, T, B, W, H, x, y };
+
+  const add = (n) => svg.appendChild(n);
+  // Recessive gridlines + y ticks (q = 0..1).
+  for (const q of [0, 0.25, 0.5, 0.75, 1]) {
+    const line = document.createElementNS(SVGNS, "line");
+    line.setAttribute("class", q === 0 ? "ch-axis" : "ch-grid");
+    line.setAttribute("x1", L); line.setAttribute("x2", W - R);
+    line.setAttribute("y1", y(q)); line.setAttribute("y2", y(q));
+    add(line);
+    const lbl = text(L - 6, y(q) + 3, q.toString(), "ch-tick");
+    lbl.setAttribute("text-anchor", "end"); add(lbl);
+  }
+  // x axis + ticks.
+  const ax = document.createElementNS(SVGNS, "line");
+  ax.setAttribute("class", "ch-axis");
+  ax.setAttribute("x1", L); ax.setAttribute("x2", L);
+  ax.setAttribute("y1", T); ax.setAttribute("y2", H - B); add(ax);
+  for (let i = 0; i <= 4; i++) {
+    const t = (xmax * i) / 4;
+    const lbl = text(x(t), H - B + 14, fmtNum(t), "ch-tick");
+    lbl.setAttribute("text-anchor", "middle"); add(lbl);
+  }
+  // Single-series line (title in the panel head names it — no legend).
+  let dpath = "";
+  pts.forEach((p, i) => { dpath += (i ? "L" : "M") + x(p.t) + "," + y(p.q); });
+  const path = document.createElementNS(SVGNS, "path");
+  path.setAttribute("class", "ch-line"); path.setAttribute("d", dpath); add(path);
+  // Direct-label the final value.
+  const last = pts[pts.length - 1];
+  const dot = document.createElementNS(SVGNS, "circle");
+  dot.setAttribute("class", "ch-end"); dot.setAttribute("cx", x(last.t)); dot.setAttribute("cy", y(last.q)); dot.setAttribute("r", 3); add(dot);
+  const el2 = text(x(last.t) + 5, y(last.q) + 3, fmtP(last.q), "ch-end-label"); add(el2);
+  // Hover overlay group (populated on mousemove).
+  const ov = document.createElementNS(SVGNS, "g"); ov.setAttribute("id", "ch-overlay"); add(ov);
+}
+
+function mkChartHover(ev) {
+  const g = MKCHART.geom; if (!g || !MKCHART.pts.length) return;
+  const svg = $("mk-chart-svg"); const rect = svg.getBoundingClientRect();
+  const mx = ev.clientX - rect.left;
+  const t = g.xmax * (mx - g.L) / (g.W - g.L - g.R);
+  if (t < 0 || t > g.xmax) return mkChartHoverClear();
+  // nearest point
+  let best = 0, bd = Infinity;
+  MKCHART.pts.forEach((p, i) => { const dd = Math.abs(p.t - t); if (dd < bd) { bd = dd; best = i; } });
+  const p = MKCHART.pts[best];
+  const ov = $("ch-overlay"); if (!ov) return; ov.textContent = "";
+  const cx = g.x(p.t), cy = g.y(p.q);
+  const cross = document.createElementNS(SVGNS, "line");
+  cross.setAttribute("class", "ch-cross"); cross.setAttribute("x1", cx); cross.setAttribute("x2", cx);
+  cross.setAttribute("y1", g.T); cross.setAttribute("y2", g.H - g.B); ov.appendChild(cross);
+  const dot = document.createElementNS(SVGNS, "circle");
+  dot.setAttribute("class", "ch-dot"); dot.setAttribute("cx", cx); dot.setAttribute("cy", cy); dot.setAttribute("r", 4); ov.appendChild(dot);
+  const label = `t=${fmtNum(p.t)}  q=${fmtP(p.q)}`;
+  const tw = label.length * 6.4 + 10;
+  let bx = cx + 8; if (bx + tw > g.W - g.R) bx = cx - 8 - tw;
+  const by = Math.max(g.T + 2, cy - 22);
+  const bg = document.createElementNS(SVGNS, "rect");
+  bg.setAttribute("class", "ch-tip-bg"); bg.setAttribute("x", bx); bg.setAttribute("y", by);
+  bg.setAttribute("width", tw); bg.setAttribute("height", 18); bg.setAttribute("rx", 4); ov.appendChild(bg);
+  const tip = text(bx + 5, by + 13, label, "ch-tip"); ov.appendChild(tip);
+}
+function mkChartHoverClear() { const ov = $("ch-overlay"); if (ov) ov.textContent = ""; }
+
