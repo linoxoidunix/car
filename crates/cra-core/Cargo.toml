@@ -1,0 +1,15 @@
+[package]
+name = "cra-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Fault tree / functional integrity scheme (SFC) reliability analysis engine: modular decomposition, BDD, minimal cut and path sets, Markov nodes"
+
+[lib]
+name = "cra"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
