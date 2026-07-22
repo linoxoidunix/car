@@ -734,3 +734,50 @@ function mkRenderSide() {
   }
 }
 
+function mkUniqueState() {
+  const d = MK.dist; let i = d.states.length + 1;
+  let name = "s" + i;
+  while (d.states.includes(name)) { i++; name = "s" + i; }
+  return name;
+}
+function mkAddState() {
+  const d = MK.dist; const name = mkUniqueState();
+  d.states.push(name);
+  d._pos[name] = { x: 300 + (Math.random() * 80 - 40), y: 200 + (Math.random() * 80 - 40) };
+  if (d.initial) d.initial.push(0);
+  MK.sel = { type: "state", name };
+  mkRefreshInitialSelect(); mkRender();
+}
+function mkRenameState(oldName, newName) {
+  const d = MK.dist;
+  if (!newName || (d.states.includes(newName) && newName !== oldName)) { setStatus("имя пустое или занято", "err"); return; }
+  d.states = d.states.map((s) => (s === oldName ? newName : s));
+  d._pos[newName] = d._pos[oldName]; if (newName !== oldName) delete d._pos[oldName];
+  for (const t of d.transitions || []) { if (t.from === oldName) t.from = newName; if (t.to === oldName) t.to = newName; }
+  d.failed = (d.failed || []).map((s) => (s === oldName ? newName : s));
+  MK.sel = { type: "state", name: newName };
+  mkRefreshInitialSelect(); mkRender();
+}
+function mkDeleteState(name) {
+  const d = MK.dist;
+  const i = d.states.indexOf(name);
+  d.states = d.states.filter((s) => s !== name);
+  delete d._pos[name];
+  d.transitions = (d.transitions || []).filter((t) => t.from !== name && t.to !== name);
+  d.failed = (d.failed || []).filter((s) => s !== name);
+  if (d.initial && i >= 0) { d.initial.splice(i, 1); if (d.initial.every((x) => x === 0)) delete d.initial; }
+  MK.sel = null;
+  mkRefreshInitialSelect(); mkRender();
+}
+function mkAddTransition(from, to) {
+  if (from === to) { setStatus("переход в себя недопустим", "err"); return; }
+  const d = MK.dist;
+  if ((d.transitions || []).some((t) => t.from === from && t.to === to)) {
+    MK.sel = { type: "trans", from, to }; mkRender(); return;
+  }
+  d.transitions = d.transitions || [];
+  d.transitions.push({ from, to, dist: trDefaultDist("exponential") });
+  MK.sel = { type: "trans", from, to };
+  mkRender();
+}
+
