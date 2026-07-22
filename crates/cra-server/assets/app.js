@@ -321,3 +321,113 @@ function selectEdge(parent, child) {
   renderEdges();
 }
 
+// ===========================================================================
+// Работа мышью: двигать холст, таскать узел, тянуть связь, выбирать
+// ===========================================================================
+const canvas = $("canvas");
+let drag = null; // {mode, ...}
+
+canvas.addEventListener("mousedown", (ev) => {
+  const portId = ev.target.dataset && ev.target.dataset.port;
+  const nodeG = ev.target.closest && ev.target.closest(".node");
+  const edgeId = ev.target.dataset && ev.target.dataset.edge;
+
+  if (portId) {
+    const n = nodeById(portId);
+    const start = bottomPort(n);
+    drag = { mode: "connect", from: portId, start };
+    ev.preventDefault();
+    return;
+  }
+  if (nodeG) {
+    const id = nodeG.dataset.id;
+    const n = nodeById(id);
+    const w = screenToWorld(ev.clientX, ev.clientY);
+    drag = { mode: "node", id, dx: w.x - n.x, dy: w.y - n.y, moved: false };
+    nodeG.classList.add("dragging");
+    ev.preventDefault();
+    return;
+  }
+  if (edgeId) {
+    // Click on an edge: select it (edit type/output in the inspector).
+    const [p, c] = edgeId.split(">");
+    selectEdge(p, c);
+    return;
+  }
+  // Empty space: pan.
+  drag = { mode: "pan", sx: ev.clientX, sy: ev.clientY, tx: view.tx, ty: view.ty, moved: false };
+});
+
+window.addEventListener("mousemove", (ev) => {
+  if (!drag) return;
+  if (drag.mode === "pan") {
+    view.tx = drag.tx + (ev.clientX - drag.sx);
+    view.ty = drag.ty + (ev.clientY - drag.sy);
+    if (Math.abs(ev.clientX - drag.sx) + Math.abs(ev.clientY - drag.sy) > 3) drag.moved = true;
+    render();
+  } else if (drag.mode === "node") {
+    const w = screenToWorld(ev.clientX, ev.clientY);
+    const n = nodeById(drag.id);
+    n.x = w.x - drag.dx; n.y = w.y - drag.dy; drag.moved = true;
+    render();
+  } else if (drag.mode === "connect") {
+    const w = screenToWorld(ev.clientX, ev.clientY);
+    const tmp = $("temp-layer");
+    tmp.textContent = "";
+    const path = document.createElementNS(SVGNS, "path");
+    path.setAttribute("class", "temp-edge");
+    path.setAttribute("d", edgePath(drag.start, w));
+    tmp.appendChild(path);
+  }
+});
+
+window.addEventListener("mouseup", (ev) => {
+  if (!drag) return;
+  if (drag.mode === "connect") {
+    $("temp-layer").textContent = "";
+    const nodeG = ev.target.closest && ev.target.closest(".node");
+    if (nodeG) addEdge(drag.from, nodeG.dataset.id);
+  } else if (drag.mode === "node") {
+    document.querySelectorAll(".node.dragging").forEach((e) => e.classList.remove("dragging"));
+    if (!drag.moved) select(drag.id);   // click without move = select
+    render();
+  } else if (drag.mode === "pan") {
+    if (!drag.moved) select(null);       // click empty = deselect
+  }
+  drag = null;
+});
+
+canvas.addEventListener("wheel", (ev) => {
+  ev.preventDefault();
+  const factor = ev.deltaY < 0 ? 1.1 : 1 / 1.1;
+  const r = canvas.getBoundingClientRect();
+  const mx = ev.clientX - r.left, my = ev.clientY - r.top;
+  // zoom around cursor
+  const wx = (mx - view.tx) / view.s, wy = (my - view.ty) / view.s;
+  view.s = Math.min(3, Math.max(0.2, view.s * factor));
+  view.tx = mx - wx * view.s; view.ty = my - wy * view.s;
+  render();
+}, { passive: false });
+
+canvas.addEventListener("keydown", (ev) => {
+  if (ev.key === "Delete" || ev.key === "Backspace") {
+    if (selected) { ev.preventDefault(); deleteNode(selected); }
+    else if (selEdge) { ev.preventDefault(); deleteEdge(selEdge.parent, selEdge.child); }
+  }
+});
+
+function fitView() {
+  if (!graph.nodes.length) { view.tx = 40; view.ty = 40; view.s = 1; render(); return; }
+  let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  for (const n of graph.nodes) {
+    minx = Math.min(minx, n.x); miny = Math.min(miny, n.y);
+    maxx = Math.max(maxx, n.x + NODE_W); maxy = Math.max(maxy, n.y + NODE_H);
+  }
+  const r = canvas.getBoundingClientRect();
+  const s = Math.min(2, Math.max(0.3, Math.min((r.width - 80) / (maxx - minx), (r.height - 80) / (maxy - miny))));
+  view.s = s;
+  view.tx = (r.width - (maxx - minx) * s) / 2 - minx * s;
+  view.ty = (r.height - (maxy - miny) * s) / 2 - miny * s;
+  render();
+}
+
