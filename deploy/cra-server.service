@@ -1,0 +1,51 @@
+[Unit]
+Description=CRA reliability analysis service
+Documentation=file:/opt/cra/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Dedicated unprivileged account; create with: useradd -r -s /usr/sbin/nologin cra
+User=cra
+Group=cra
+ExecStart=/opt/cra/cra-server
+Restart=on-failure
+RestartSec=2
+
+# --- configuration -------------------------------------------------------
+# Bind only to localhost: the ГОСТ-TLS proxy (nginx/КриптоПро) fronts it.
+Environment=CRA_ADDR=127.0.0.1:8080
+Environment=CRA_WORKERS=8
+Environment=CRA_MAX_CONN=256
+Environment=CRA_TIMEOUT_SECS=120
+# Identity is asserted by the trusted front proxy after SSO against the
+# Astra domain (ALD Pro / FreeIPA). The proxy must set X-Remote-User and
+# must be the only host allowed to reach this service.
+Environment=CRA_AUTH=proxy
+Environment=CRA_PROXY_HEADER=X-Remote-User
+Environment=CRA_TRUSTED_PROXIES=127.0.0.1
+# For a shared-token deployment instead, use:
+#   Environment=CRA_AUTH=token
+#   Environment=CRA_TOKEN=<put in a drop-in with mode 0600, not here>
+
+# --- sandboxing (systemd hardening; audit-friendly) ----------------------
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# The binary is self-contained; it needs no writable paths.
+ReadWritePaths=
+
+[Install]
+WantedBy=multi-user.target
