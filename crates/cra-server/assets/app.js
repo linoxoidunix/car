@@ -1129,3 +1129,121 @@ function renderResponse(resp) {
     (s.noncoherent ? " · немонотонная схема" : "")));
 }
 
+// ===========================================================================
+// Палитра / вкладки / кнопки (связываем события)
+// ===========================================================================
+function buildPalette() {
+  const box = $("palette-buttons"); box.textContent = "";
+  for (const spec of PALETTE[graph.kind]) {
+    const b = el("button", { class: "pal" }, "+ " + spec.label);
+    b.onclick = () => {
+      const r = canvas.getBoundingClientRect();
+      const c = screenToWorld(r.left + r.width / 2, r.top + r.height / 3);
+      addNode(spec, c.x - NODE_W / 2 + (Math.random() * 40 - 20), c.y + (Math.random() * 40 - 20));
+    };
+    box.append(b);
+  }
+}
+
+function switchTab(name) {
+  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+  $("tab-diagram").classList.toggle("active", name === "diagram");
+  $("tab-json").classList.toggle("active", name === "json");
+}
+function openDrawer() { $("results-drawer").classList.remove("collapsed"); $("drawer-toggle").textContent = "свернуть ▾"; }
+
+async function loadExample(kind, name) {
+  const r = await fetch("/api/examples/" + name);
+  const req = await r.json();
+  graph = requestToGraph(req);
+  seq = graph.nodes.reduce((m, n) => Math.max(m, idNum(n.id)), 0);
+  $("kind").value = graph.kind;
+  buildPalette(); select(null); fitView();
+  setStatus("пример загружен", "ok");
+}
+
+// Best-effort import of a request JSON into an editable graph (auto-layout).
+function requestToGraph(req) {
+  const m = req.model;
+  const g = { kind: m.type, nodes: [], edges: [] };
+  const pos = {}; let col = 0;
+  const place = (id) => { if (!pos[id]) { pos[id] = { x: 60 + (col % 6) * 170, y: 60 + Math.floor(col / 6) * 110 }; col++; } return pos[id]; };
+  if (m.type === "fault_tree") {
+    for (const e of m.events) { const p = place(e.id); g.nodes.push({ id: e.id, x: p.x, y: p.y, role: "event", dist: e.dist }); }
+    for (const gt of (m.gates || [])) { const p = place(gt.id); g.nodes.push({ id: gt.id, x: p.x, y: p.y, role: "gate", op: gt.op, k: gt.k }); }
+    for (const gt of (m.gates || [])) for (const inp of gt.inputs) g.edges.push({ parent: gt.id, child: inp });
+    markTop(g, m.top);
+  } else {
+    for (const nd of m.nodes) { const p = place(nd.id); g.nodes.push({ id: nd.id, x: p.x, y: p.y, role: "sfc", dist: nd.dist || null }); }
+    for (const nd of m.nodes) {
+      // Per-arc kind; legacy files fall back to the node's `combine` default.
+      const defaultConj = (nd.combine || "or") === "and";
+      for (const inp of (nd.inputs || [])) {
+        g.edges.push({
+          parent: nd.id, child: inp.from,
+          inverse: !!inp.inverse,
+          conj: inp.conjunctive != null ? !!inp.conjunctive : defaultConj,
+        });
+      }
+    }
+    const target = m.criterion && (m.criterion.target || m.criterion.node);
+    if (target) markTop(g, target);
+  }
+  if (req.times) $("mtime").value = req.times.join(", ");
+  else if (req.mission_time != null) $("mtime").value = String(req.mission_time);
+  return g;
+}
+function markTop(g, id) { const n = g.nodes.find((x) => x.id === id); if (n) n.top = true; }
+
+// ---- events ----
+document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
+$("kind").addEventListener("change", () => {
+  if (graph.nodes.length && !confirm("Сменить тип модели? Палитра изменится, узлы сохранятся, но их роли могут не подойти.")) {
+    $("kind").value = graph.kind; return;
+  }
+  graph.kind = $("kind").value; buildPalette(); render();
+});
+$("analyze").addEventListener("click", analyze);
+$("fit").addEventListener("click", fitView);
+$("clear").addEventListener("click", () => { if (confirm("Очистить схему?")) { graph = { kind: graph.kind, nodes: [], edges: [] }; seq = 0; select(null); render(); } });
+$("example-ft").addEventListener("click", () => loadExample("fault_tree", "fault_tree"));
+$("example-sfc").addEventListener("click", () => loadExample("sfc", "sfc_bridge"));
+$("from-diagram").addEventListener("click", () => {
+  const { req, errs } = graphToRequest();
+  $("input").value = JSON.stringify(req, null, 2);
+  if (errs.length) setStatus("схема неполна, JSON частичный", "err"); else setStatus("JSON построен", "ok");
+});
+$("format").addEventListener("click", () => {
+  try { $("input").value = JSON.stringify(JSON.parse($("input").value), null, 2); setStatus("отформатировано", "ok"); }
+  catch (e) { setStatus("некорректный JSON", "err"); }
+});
+$("drawer-toggle").addEventListener("click", () => {
+  const d = $("results-drawer"); const c = d.classList.toggle("collapsed");
+  $("drawer-toggle").textContent = c ? "развернуть ▴" : "свернуть ▾";
+});
+// Markov modal controls
+$("mk-close").addEventListener("click", closeMarkov);
+$("mk-add").addEventListener("click", mkAddState);
+$("mk-steady").addEventListener("change", () => { MK.dist.steady = $("mk-steady").checked; mkRender(); });
+$("mk-initial").addEventListener("change", () => {
+  const v = $("mk-initial").value; const d = MK.dist;
+  if (v === "__default") { delete d.initial; }
+  else { d.initial = d.states.map((s) => (s === v ? 1 : 0)); }
+  mkRender();
+});
+$("mk-plot").addEventListener("click", mkPlot);
+$("mk-chart-svg").addEventListener("mousemove", mkChartHover);
+$("mk-chart-svg").addEventListener("mouseleave", mkChartHoverClear);
+$("mk-modal").addEventListener("mousedown", (e) => { if (e.target.id === "mk-modal") closeMarkov(); });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("mk-modal").classList.contains("hidden")) closeMarkov();
+  else if ((e.ctrlKey || e.metaKey) && e.key === "Enter") analyze();
+});
+
+// ---- init ----
+load();
+$("kind").value = graph.kind;
+buildPalette();
+render();
+renderInspector();
+if (graph.nodes.length) fitView();
