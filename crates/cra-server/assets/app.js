@@ -898,3 +898,78 @@ function mkChartHover(ev) {
 }
 function mkChartHoverClear() { const ov = $("ch-overlay"); if (ov) ov.textContent = ""; }
 
+// ---- modal canvas interaction ----
+(function wireMk() {
+  const cv = $("mk-canvas");
+  function world(ev) { const r = cv.getBoundingClientRect(); return { x: ev.clientX - r.left, y: ev.clientY - r.top }; }
+  cv.addEventListener("mousedown", (ev) => {
+    const port = ev.target.dataset && ev.target.dataset.mkport;
+    const stateG = ev.target.closest && ev.target.closest(".mk-state");
+    const trId = ev.target.dataset && ev.target.dataset.tr;
+    if (port) { MK.drag = { mode: "connect", from: port, start: MK.dist._pos[port] }; ev.preventDefault(); return; }
+    if (stateG) {
+      const name = stateG.dataset.state; const w = world(ev); const p = MK.dist._pos[name];
+      MK.drag = { mode: "move", name, dx: w.x - p.x, dy: w.y - p.y, moved: false }; ev.preventDefault(); return;
+    }
+    if (trId) { const [f, t] = trId.split(">"); MK.sel = { type: "trans", from: f, to: t }; mkRender(); return; }
+    MK.sel = null; mkRender();
+  });
+  window.addEventListener("mousemove", (ev) => {
+    if (!MK.drag) return;
+    const w = world(ev);
+    if (MK.drag.mode === "move") {
+      const p = MK.dist._pos[MK.drag.name]; p.x = w.x - MK.drag.dx; p.y = w.y - MK.drag.dy; MK.drag.moved = true; mkRender();
+    } else if (MK.drag.mode === "connect") {
+      const tmp = $("mk-temp"); tmp.textContent = "";
+      const path = document.createElementNS(SVGNS, "path");
+      path.setAttribute("class", "mk-temp");
+      path.setAttribute("d", `M${MK.drag.start.x},${MK.drag.start.y} L${w.x},${w.y}`);
+      tmp.appendChild(path);
+    }
+  });
+  window.addEventListener("mouseup", (ev) => {
+    if (!MK.drag) return;
+    if (MK.drag.mode === "connect") {
+      $("mk-temp").textContent = "";
+      const stateG = ev.target.closest && ev.target.closest(".mk-state");
+      if (stateG) mkAddTransition(MK.drag.from, stateG.dataset.state);
+    } else if (MK.drag.mode === "move" && !MK.drag.moved) {
+      MK.sel = { type: "state", name: MK.drag.name }; mkRender();
+    }
+    MK.drag = null;
+  });
+  cv.addEventListener("keydown", (ev) => {
+    if ((ev.key === "Delete" || ev.key === "Backspace") && MK.sel) {
+      ev.preventDefault();
+      if (MK.sel.type === "state") mkDeleteState(MK.sel.name);
+      else { MK.dist.transitions = MK.dist.transitions.filter((t) => !(t.from === MK.sel.from && t.to === MK.sel.to)); MK.sel = null; mkRender(); }
+    }
+  });
+})();
+
+// small DOM helpers
+function el(tag, attrs, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) { if (k === "class") n.className = v; else n.setAttribute(k, v); }
+  for (const c of kids) n.append(c);
+  return n;
+}
+function field(label, control) { const f = el("div", { class: "field" }); f.append(el("label", {}, label), control); return f; }
+function fieldRow(control, label) { const f = el("div", { class: "field row" }); f.append(control, el("label", {}, label)); return f; }
+function inputEl(type, val, onchange) {
+  const i = el("input", { type }); i.value = val;
+  i.addEventListener("change", () => onchange(i.value));
+  return i;
+}
+function selectEl(opts, val, onchange) {
+  const s = el("select");
+  for (const [v, label] of opts) { const o = el("option", { value: v }, label); if (v === val) o.selected = true; s.append(o); }
+  s.addEventListener("change", () => onchange(s.value));
+  return s;
+}
+function checkboxEl(checked, onchange) {
+  const c = el("input", { type: "checkbox" }); c.checked = checked;
+  c.addEventListener("change", () => onchange(c.checked));
+  return c;
+}
+
