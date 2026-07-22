@@ -973,3 +973,87 @@ function checkboxEl(checked, onchange) {
   return c;
 }
 
+// ===========================================================================
+// Сериализация: граф -> запрос на расчёт
+// ===========================================================================
+// Собрать из нарисованного графа JSON-запрос для бэкенда. Заодно собираем
+// список ошибок (errs), если схема неполная.
+function graphToRequest() {
+  const errs = [];
+  if (!graph.nodes.length) errs.push("схема пуста");
+
+  // Вершина (top) — узел, у которого есть входы, но сам он никуда не входит.
+  const isChild = new Set(graph.edges.map((e) => e.child));
+  const isParent = new Set(graph.edges.map((e) => e.parent));
+  const rootCandidates = graph.nodes.filter((n) => isParent.has(n.id) && !isChild.has(n.id));
+  const marked = graph.nodes.filter((n) => n.top);
+  let top = null;
+  if (marked.length === 1) top = marked[0];
+  else if (marked.length > 1) errs.push("отмечено несколько вершинных узлов");
+  else if (rootCandidates.length === 1) top = rootCandidates[0];
+  else if (graph.nodes.length === 1) top = graph.nodes[0];
+  else errs.push("не удаётся определить вершину — отметьте её галочкой в инспекторе");
+
+  let model = null;
+  if (graph.kind === "fault_tree") {
+    const events = [], gates = [];
+    for (const n of graph.nodes) {
+      const kids = childrenEdges(n.id).map((e) => e.child);
+      if (n.role === "event") {
+        if (kids.length) errs.push(`событие «${n.id}» не может иметь входов`);
+        if (!n.dist) errs.push(`у события «${n.id}» не задано распределение`);
+        else events.push({ id: n.id, dist: cleanDist(n.dist) });
+      } else {
+        if (!kids.length) errs.push(`у элемента «${n.id}» нет входов`);
+        const g = { id: n.id, op: n.op, inputs: kids };
+        if (n.op === "atleast") { g.k = n.k || 2; if (g.k > kids.length) errs.push(`«${n.id}»: k=${g.k} больше числа входов`); }
+        gates.push(g);
+      }
+    }
+    model = { type: "fault_tree", top: top ? top.id : "", events, gates };
+  } else {
+    const nodes = [];
+    for (const n of graph.nodes) {
+      // Canonical СФЦ: each arc carries its own kind (conjunctive/disjunctive)
+      // and output (direct/inverse).
+      const inputs = childrenEdges(n.id).map((e) => {
+        const arc = { from: e.child, conjunctive: !!e.conj };
+        if (e.inverse) arc.inverse = true;
+        return arc;
+      });
+      const o = { id: n.id };
+      if (n.dist) o.dist = cleanDist(n.dist);
+      if (inputs.length) o.inputs = inputs;
+      if (!n.dist && !inputs.length) errs.push(`фиктивный узел «${n.id}» без входов`);
+      nodes.push(o);
+    }
+    model = { type: "sfc", nodes, criterion: { target: top ? top.id : "" } };
+  }
+
+  const times = parseTimes($("mtime").value);
+  const req = { model, options: { cut_sets: true, path_sets: true, max_order: 8 } };
+  if (times.length > 1) req.times = times; else req.mission_time = times[0] || 0;
+  return { req, errs };
+}
+function cleanDist(d) {
+  const o = { type: d.type };
+  if (d.type === "markov") {
+    o.states = d.states || [];
+    o.transitions = (d.transitions || []).map((tr) => {
+      const dist = tr.dist || { type: "exponential", rate: tr.rate != null ? tr.rate : 1e-3 };
+      // Exponential is sent as the compact `rate` shorthand; others as `dist`.
+      if (dist.type === "exponential") return { from: tr.from, to: tr.to, rate: +dist.rate };
+      const dd = { type: dist.type };
+      for (const [k] of TR_DIST_SCHEMA[dist.type]) dd[k] = +dist[k];
+      return { from: tr.from, to: tr.to, dist: dd };
+    });
+    o.failed = d.failed || []; if (d.initial) o.initial = d.initial; if (d.steady) o.steady = true;
+    return o;
+  }
+  for (const [k, , , opt] of DIST_SCHEMA[d.type]) if (d[k] != null && d[k] !== "") o[k] = +d[k];
+  return o;
+}
+function parseTimes(s) {
+  return String(s).split(",").map((x) => +x.trim()).filter((x) => isFinite(x));
+}
+
