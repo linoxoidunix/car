@@ -1,0 +1,20 @@
+{
+  "model": {
+    "type": "sfc",
+    "nodes": [
+      {"id": "src",    "dist": {"type": "fixed", "q": 0.0}},
+      {"id": "left1",  "dist": {"type": "fixed", "q": 0.1}, "inputs": [{"from": "src"}]},
+      {"id": "left2",  "dist": {"type": "fixed", "q": 0.1}, "inputs": [{"from": "src"}]},
+      {"id": "bridge", "dist": {"type": "fixed", "q": 0.1},
+       "inputs": [{"from": "left1"}, {"from": "left2"}], "combine": "or"},
+      {"id": "right1", "dist": {"type": "fixed", "q": 0.1},
+       "inputs": [{"from": "left1"}, {"from": "bridge"}], "combine": "or"},
+      {"id": "right2", "dist": {"type": "fixed", "q": 0.1},
+       "inputs": [{"from": "left2"}, {"from": "bridge"}], "combine": "or"},
+      {"id": "sink", "inputs": [{"from": "right1"}, {"from": "right2"}], "combine": "or"}
+    ],
+    "criterion": {"target": "sink"}
+  },
+  "mission_time": 0,
+  "options": {"cut_sets": true, "path_sets": true}
+}

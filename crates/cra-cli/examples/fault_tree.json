@@ -1,0 +1,32 @@
+{
+  "model": {
+    "type": "fault_tree",
+    "top": "system_failure",
+    "events": [
+      {"id": "pump_a",  "dist": {"type": "exponential", "lambda": 1e-4}},
+      {"id": "pump_b",  "dist": {"type": "exponential", "lambda": 1e-4, "mu": 1e-1}},
+      {"id": "valve",   "dist": {"type": "weibull", "shape": 2.0, "scale": 20000}},
+      {"id": "sensor1", "dist": {"type": "fixed", "q": 0.01}},
+      {"id": "sensor2", "dist": {"type": "fixed", "q": 0.01}},
+      {"id": "sensor3", "dist": {"type": "fixed", "q": 0.01}},
+      {"id": "power", "dist": {"type": "markov",
+        "states": ["nominal", "degraded", "lost"],
+        "initial": [1, 0, 0],
+        "transitions": [
+          {"from": "nominal",  "to": "degraded", "rate": 2e-4},
+          {"from": "degraded", "to": "nominal",  "rate": 5e-2},
+          {"from": "degraded", "to": "lost",     "rate": 1e-3},
+          {"from": "nominal",  "to": "lost",     "rate": 1e-6}
+        ],
+        "failed": ["lost"]}}
+    ],
+    "gates": [
+      {"id": "pumps", "op": "and", "inputs": ["pump_a", "pump_b"]},
+      {"id": "sensors", "op": "atleast", "k": 2, "inputs": ["sensor1", "sensor2", "sensor3"]},
+      {"id": "hydraulics", "op": "or", "inputs": ["pumps", "valve"]},
+      {"id": "system_failure", "op": "or", "inputs": ["hydraulics", "sensors", "power"]}
+    ]
+  },
+  "times": [1000, 5000, 10000],
+  "options": {"cut_sets": true, "path_sets": true, "max_order": 6}
+}
