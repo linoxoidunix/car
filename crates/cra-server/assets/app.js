@@ -256,3 +256,68 @@ function edgePath(a, b) {
   return `M${a.x},${a.y} C${a.x},${a.y + dy} ${b.x},${b.y - dy} ${b.x},${b.y}`;
 }
 
+// ===========================================================================
+// Node / edge operations
+// ===========================================================================
+function addNode(spec, wx, wy) {
+  seq += 1;
+  const n = Object.assign({ id: "n" + seq, x: wx, y: wy }, spec.make());
+  graph.nodes.push(n);
+  select(n.id);
+  render();
+}
+function deleteNode(id) {
+  graph.nodes = graph.nodes.filter((n) => n.id !== id);
+  graph.edges = graph.edges.filter((e) => e.parent !== id && e.child !== id);
+  if (selected === id) select(null);
+  render();
+}
+function deleteEdge(parent, child) {
+  graph.edges = graph.edges.filter((e) => !(e.parent === parent && e.child === child));
+  if (selEdge && selEdge.parent === parent && selEdge.child === child) { selEdge = null; renderInspector(); }
+  render();
+}
+function addEdge(parent, child) {
+  if (parent === child) return;
+  if (graph.edges.some((e) => e.parent === parent && e.child === child)) return;
+  if (reaches(child, parent)) { setStatus("нельзя: возникнет цикл", "err"); return; }
+  const p = nodeById(parent);
+  if (p.role === "gate" && p.op === "not" && childrenEdges(parent).length >= 1) {
+    setStatus("НЕ принимает только один вход", "err"); return;
+  }
+  // Canonical СФЦ default: disjunctive (ИЛИ) arc, direct output.
+  const e = { parent, child };
+  if (graph.kind === "sfc") e.conj = false;
+  graph.edges.push(e);
+  render();
+}
+// does `from` reach `to` following parent->child?
+function reaches(from, to) {
+  const seen = new Set(); const st = [from];
+  while (st.length) {
+    const v = st.pop();
+    if (v === to) return true;
+    if (seen.has(v)) continue; seen.add(v);
+    for (const e of childrenEdges(v)) st.push(e.child);
+  }
+  return false;
+}
+function edgeByPair(parent, child) {
+  return graph.edges.find((x) => x.parent === parent && x.child === child);
+}
+
+function select(id) {
+  selected = id;
+  selEdge = null;
+  renderInspector();
+  renderNodes();
+  renderEdges();
+}
+function selectEdge(parent, child) {
+  selEdge = { parent, child };
+  selected = null;
+  renderInspector();
+  renderNodes();
+  renderEdges();
+}
+
