@@ -98,3 +98,161 @@ const PALETTE = {
   ],
 };
 
+// ===========================================================================
+// Хранение (localStorage): не потерять схему
+// ===========================================================================
+function save() {
+  try { localStorage.setItem("cra.graph", JSON.stringify(graph)); } catch (e) {}
+}
+function load() {
+  try {
+    const s = localStorage.getItem("cra.graph");
+    if (s) { graph = JSON.parse(s); seq = graph.nodes.reduce((m, n) => Math.max(m, idNum(n.id)), 0); }
+  } catch (e) {}
+}
+function idNum(id) { const m = /(\d+)$/.exec(id); return m ? +m[1] : 0; }
+
+// ===========================================================================
+// Геометрия (перевод координат экрана в координаты холста и т.п.)
+// ===========================================================================
+// Экран -> мир: учитываем сдвиг (tx,ty) и масштаб (s) холста.
+function screenToWorld(sx, sy) {
+  const r = $("canvas").getBoundingClientRect();
+  return { x: (sx - r.left - view.tx) / view.s, y: (sy - r.top - view.ty) / view.s };
+}
+function nodeById(id) { return graph.nodes.find((n) => n.id === id); }
+function childrenEdges(id) { return graph.edges.filter((e) => e.parent === id); }
+function canHaveInputs(n) { return n.role === "gate" || n.role === "sfc"; }
+function bottomPort(n) { return { x: n.x + NODE_W / 2, y: n.y + NODE_H }; }
+function topCenter(n) { return { x: n.x + NODE_W / 2, y: n.y }; }
+
+// ===========================================================================
+// Отрисовка (rendering)
+// ===========================================================================
+// Перерисовать всё: связи, узлы, и сразу сохранить в localStorage.
+function render() {
+  $("viewport").setAttribute("transform", `translate(${view.tx},${view.ty}) scale(${view.s})`);
+  renderEdges();
+  renderNodes();
+  save();
+}
+
+function renderNodes() {
+  const layer = $("nodes-layer");
+  layer.textContent = "";
+  for (const n of graph.nodes) {
+    const g = document.createElementNS(SVGNS, "g");
+    g.setAttribute("class", "node " + n.role + (selected === n.id ? " selected" : "") + (n.top ? " top" : ""));
+    g.setAttribute("transform", `translate(${n.x},${n.y})`);
+    g.dataset.id = n.id;
+
+    const rect = document.createElementNS(SVGNS, "rect");
+    rect.setAttribute("class", "body");
+    rect.setAttribute("width", NODE_W); rect.setAttribute("height", NODE_H);
+    rect.setAttribute("rx", 8);
+    g.appendChild(rect);
+
+    const t1 = text(NODE_W / 2, 20, n.id, "title");
+    t1.setAttribute("text-anchor", "middle");
+    t1.setAttribute("font-weight", "600");
+    g.appendChild(t1);
+
+    const t2 = text(NODE_W / 2, 38, nodeSubtitle(n), "sub");
+    t2.setAttribute("text-anchor", "middle");
+    g.appendChild(t2);
+
+    if (n.top) {
+      const b = text(NODE_W / 2, -6, "▲ вершина", "top-badge");
+      b.setAttribute("text-anchor", "middle");
+      g.appendChild(b);
+    }
+
+    if (canHaveInputs(n)) {
+      const port = document.createElementNS(SVGNS, "circle");
+      port.setAttribute("class", "port");
+      port.setAttribute("cx", NODE_W / 2); port.setAttribute("cy", NODE_H);
+      port.setAttribute("r", 6);
+      port.dataset.port = n.id;
+      g.appendChild(port);
+    }
+    layer.appendChild(g);
+  }
+}
+
+function nodeSubtitle(n) {
+  if (n.role === "gate") {
+    return OP_LABEL[n.op] + (n.op === "atleast" ? " (k=" + (n.k || 2) + ")" : "");
+  }
+  return distShort(n.dist);
+}
+function distShort(d) {
+  if (!d) return "фиктивный";
+  switch (d.type) {
+    case "fixed": return "q=" + fmtNum(d.q);
+    case "exponential": return "λ=" + fmtNum(d.lambda) + (d.mu != null && d.mu !== "" ? " μ=" + fmtNum(d.mu) : "");
+    case "weibull": return "Вейбулл " + fmtNum(d.shape) + "," + fmtNum(d.scale);
+    case "lognormal": return "логнорм " + fmtNum(d.mu) + "," + fmtNum(d.sigma);
+    case "normal": return "норм " + fmtNum(d.mean) + "," + fmtNum(d.std);
+    case "uniform": return "равн [" + fmtNum(d.a) + "," + fmtNum(d.b) + "]";
+    case "gamma": return "гамма " + fmtNum(d.shape) + "," + fmtNum(d.rate);
+    case "markov": return "Марков (" + (d.states ? d.states.length : 0) + " сост.)";
+    default: return d.type;
+  }
+}
+function fmtNum(x) {
+  if (x === "" || x == null) return "?";
+  const n = +x;
+  if (!isFinite(n)) return String(x);
+  if (n !== 0 && (Math.abs(n) < 1e-3 || Math.abs(n) >= 1e5)) return n.toExponential(1);
+  return String(n);
+}
+
+function text(x, y, str, cls) {
+  const t = document.createElementNS(SVGNS, "text");
+  t.setAttribute("x", x); t.setAttribute("y", y);
+  if (cls) t.setAttribute("class", cls);
+  t.textContent = str;
+  return t;
+}
+
+function renderEdges() {
+  const layer = $("edges-layer");
+  layer.textContent = "";
+  for (const e of graph.edges) {
+    const p = nodeById(e.parent), c = nodeById(e.child);
+    if (!p || !c) continue;
+    const a = bottomPort(p), b = topCenter(c);
+    const d = edgePath(a, b);
+
+    const hit = document.createElementNS(SVGNS, "path");
+    hit.setAttribute("class", "edge-hit");
+    hit.setAttribute("d", d);
+    hit.dataset.edge = e.parent + ">" + e.child;
+    layer.appendChild(hit);
+
+    const sfc = graph.kind === "sfc";
+    const isSel = selEdge && selEdge.parent === e.parent && selEdge.child === e.child;
+    const kindCls = sfc ? (e.conj ? " conj" : " disj") : "";
+    const path = document.createElementNS(SVGNS, "path");
+    path.setAttribute("class", "edge" + (e.inverse ? " inverse" : "") + kindCls + (isSel ? " selected" : ""));
+    path.setAttribute("d", d);
+    layer.appendChild(path);
+
+    // Canonical СФЦ arc badge: & (conjunctive) / ≥1 (disjunctive), + ¬ if inverse.
+    if (sfc) {
+      const badge = (e.conj ? "&" : "≥1") + (e.inverse ? " ¬" : "");
+      const mid = text((a.x + b.x) / 2, (a.y + b.y) / 2 - 3, badge, "edge-label" + (e.conj ? " conj" : " disj"));
+      mid.setAttribute("text-anchor", "middle");
+      layer.appendChild(mid);
+    } else if (e.inverse) {
+      const mid = text((a.x + b.x) / 2, (a.y + b.y) / 2 - 3, "¬", "edge-label");
+      mid.setAttribute("text-anchor", "middle");
+      layer.appendChild(mid);
+    }
+  }
+}
+function edgePath(a, b) {
+  const dy = Math.max(24, Math.abs(b.y - a.y) / 2);
+  return `M${a.x},${a.y} C${a.x},${a.y + dy} ${b.x},${b.y - dy} ${b.x},${b.y}`;
+}
+
