@@ -555,3 +555,182 @@ function buildMarkovEditor(body, n) {
   body.appendChild(open);
 }
 
+// ===========================================================================
+// Редактор марковской диаграммы (окно) + превью в инспекторе
+// ===========================================================================
+const MK_R = 30;            // state circle radius
+const MK = { node: null, dist: null, sel: null, drag: null };
+
+function mkEnsurePos(d) {
+  d._pos = d._pos || {};
+  const states = d.states || [];
+  const missing = states.filter((s) => !d._pos[s]);
+  if (missing.length) {
+    const cx = 300, cy = 200, R = Math.min(150, 60 + states.length * 12);
+    states.forEach((s, i) => {
+      if (!d._pos[s]) {
+        const a = (i / Math.max(1, states.length)) * 2 * Math.PI - Math.PI / 2;
+        d._pos[s] = { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a) };
+      }
+    });
+  }
+  // Drop positions of states that no longer exist.
+  for (const k of Object.keys(d._pos)) if (!states.includes(k)) delete d._pos[k];
+}
+
+function mkInitialProb(d, name) {
+  const i = (d.states || []).indexOf(name);
+  if (d.initial && d.initial.length === d.states.length) return d.initial[i] || 0;
+  return i === 0 ? 1 : 0;   // backend default: all mass on first state
+}
+
+// Geometry of a transition arrow between two states (trimmed to circles,
+// curved aside when the reverse transition also exists).
+function mkTransGeom(d, tr) {
+  const a = d._pos[tr.from], b = d._pos[tr.to];
+  if (!a || !b) return null;
+  let dx = b.x - a.x, dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len, uy = dy / len;
+  const hasReverse = (d.transitions || []).some((t) => t.from === tr.to && t.to === tr.from);
+  const off = hasReverse ? 16 : 0;              // perpendicular offset
+  const px = -uy * off, py = ux * off;
+  const sx = a.x + ux * MK_R + px, sy = a.y + uy * MK_R + py;
+  const ex = b.x - ux * MK_R + px, ey = b.y - uy * MK_R + py;
+  const mx = (sx + ex) / 2 + px, my = (sy + ey) / 2 + py;
+  // Slight quadratic curve through the offset midpoint.
+  const cx = mx, cy = my;
+  return { d: `M${sx},${sy} Q${cx},${cy} ${ex},${ey}`, lx: cx, ly: cy - 4 };
+}
+
+function mkDrawInto(edgesG, statesG, d, interactive) {
+  edgesG.textContent = ""; statesG.textContent = "";
+  for (const tr of d.transitions || []) {
+    const g = mkTransGeom(d, tr); if (!g) continue;
+    if (interactive) {
+      const hit = document.createElementNS(SVGNS, "path");
+      hit.setAttribute("class", "mk-tr-hit"); hit.setAttribute("d", g.d);
+      hit.dataset.tr = tr.from + ">" + tr.to; edgesG.appendChild(hit);
+    }
+    const p = document.createElementNS(SVGNS, "path");
+    const selected = MK.sel && MK.sel.type === "trans" && MK.sel.from === tr.from && MK.sel.to === tr.to;
+    p.setAttribute("class", "mk-tr" + (selected ? " selected" : "")); p.setAttribute("d", g.d);
+    edgesG.appendChild(p);
+    const lbl = text(g.lx, g.ly, trDistShort(tr.dist), "mk-tr-label");
+    edgesG.appendChild(lbl);
+  }
+  for (const s of d.states || []) {
+    const pos = d._pos[s]; if (!pos) continue;
+    const failed = (d.failed || []).includes(s);
+    const initial = mkInitialProb(d, s) > 0;
+    const selected = MK.sel && MK.sel.type === "state" && MK.sel.name === s;
+    const g = document.createElementNS(SVGNS, "g");
+    g.setAttribute("class", "mk-state" + (failed ? " failed" : "") + (initial ? " initial" : "") + (selected ? " selected" : ""));
+    g.setAttribute("transform", `translate(${pos.x},${pos.y})`);
+    g.dataset.state = s;
+    const c = document.createElementNS(SVGNS, "circle");
+    c.setAttribute("class", "circle"); c.setAttribute("r", MK_R);
+    g.appendChild(c);
+    g.appendChild(text(0, 4, s, null));
+    if (initial) { const b = text(0, -MK_R - 5, "↧ старт", "init-badge"); g.appendChild(b); }
+    if (interactive) {
+      const port = document.createElementNS(SVGNS, "circle");
+      port.setAttribute("class", "mk-port"); port.setAttribute("r", 6);
+      port.setAttribute("cx", MK_R); port.setAttribute("cy", 0);
+      port.dataset.mkport = s; g.appendChild(port);
+    }
+    statesG.appendChild(g);
+  }
+}
+
+function mkDrawPreview(svg, d) {
+  // Compute bounds and set a viewBox so the whole chain fits, read-only.
+  svg.innerHTML = '<g class="e"></g><g class="s"></g>';
+  const states = d.states || [];
+  if (!states.length) { svg.innerHTML = '<text x="10" y="24" font-size="12" fill="#888">нет состояний</text>'; return; }
+  mkDrawInto(svg.querySelector(".e"), svg.querySelector(".s"), d, false);
+  let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  for (const s of states) { const p = d._pos[s]; minx = Math.min(minx, p.x); miny = Math.min(miny, p.y); maxx = Math.max(maxx, p.x); maxy = Math.max(maxy, p.y); }
+  const pad = MK_R + 16;
+  svg.setAttribute("viewBox", `${minx - pad} ${miny - pad} ${maxx - minx + 2 * pad} ${maxy - miny + 2 * pad}`);
+}
+
+// ---- modal open/close ----
+function openMarkov(node) {
+  MK.node = node; MK.dist = node.dist; MK.sel = null;
+  normalizeMarkovDist(MK.dist);
+  mkEnsurePos(MK.dist);
+  $("mk-node-id").textContent = node.id;
+  $("mk-steady").checked = !!MK.dist.steady;
+  $("mk-modal").classList.remove("hidden");
+  mkRefreshInitialSelect();
+  mkRender();
+  $("mk-tmax").value = "";
+  mkPlotStatus("");
+  mkPlot(); // auto-draw q(t) for the current node
+}
+function closeMarkov() { $("mk-modal").classList.add("hidden"); renderInspector(); render(); }
+
+function mkRefreshInitialSelect() {
+  const sel = $("mk-initial");
+  const cur = mkCurrentInitialState();
+  sel.innerHTML = "";
+  sel.appendChild(el("option", { value: "__default" }, "первое (по умолчанию)"));
+  for (const s of MK.dist.states || []) sel.appendChild(el("option", { value: s }, s));
+  sel.value = cur || "__default";
+}
+function mkCurrentInitialState() {
+  const d = MK.dist;
+  if (!d.initial) return null;
+  const i = d.initial.findIndex((x) => x >= 0.999);
+  return i >= 0 ? d.states[i] : null;
+}
+
+function mkRender() {
+  mkDrawInto($("mk-edges"), $("mk-states"), MK.dist, true);
+  mkRenderSide();
+  save();
+}
+
+function mkRenderSide() {
+  const side = $("mk-side"); side.textContent = "";
+  const d = MK.dist;
+  if (!MK.sel) { side.appendChild(el("p", { class: "hint" }, "Выберите состояние или переход, либо добавьте состояние.")); return; }
+  if (MK.sel.type === "state") {
+    const name = MK.sel.name;
+    side.appendChild(el("h3", {}, "Состояние"));
+    side.appendChild(field("Имя", inputEl("text", name, (v) => mkRenameState(name, v.trim()))));
+    side.appendChild(fieldRow(checkboxEl((d.failed || []).includes(name), (on) => {
+      d.failed = d.failed || [];
+      if (on && !d.failed.includes(name)) d.failed.push(name);
+      if (!on) d.failed = d.failed.filter((x) => x !== name);
+      mkRender();
+    }), "Отказовое состояние"));
+    const del = el("button", { class: "del" }, "Удалить состояние");
+    del.onclick = () => mkDeleteState(name);
+    side.appendChild(del);
+  } else {
+    const tr = (d.transitions || []).find((t) => t.from === MK.sel.from && t.to === MK.sel.to);
+    if (!tr) { MK.sel = null; return mkRenderSide(); }
+    if (!tr.dist) tr.dist = trDefaultDist("exponential");
+    side.appendChild(el("h3", {}, "Переход"));
+    side.appendChild(el("div", { class: "meta" }, `${tr.from} → ${tr.to}`));
+    side.appendChild(field("Распределение времени", selectEl(
+      Object.keys(TR_DIST_NAMES).map((t) => [t, TR_DIST_NAMES[t]]), tr.dist.type, (v) => {
+        tr.dist = trDefaultDist(v); mkRender();
+      })));
+    for (const [key, label, def] of TR_DIST_SCHEMA[tr.dist.type]) {
+      const cur = tr.dist[key] != null ? tr.dist[key] : def;
+      side.appendChild(field(label, inputEl("text", cur, (v) => {
+        const x = +v; if (isFinite(x)) tr.dist[key] = x; mkRender();
+      })));
+    }
+    if (tr.dist.type !== "exponential") {
+      side.appendChild(el("p", { class: "meta" }, "Неэкспоненциальный переход → узел считается как полумарковский процесс."));
+    }
+    const del = el("button", { class: "del" }, "Удалить переход");
+    del.onclick = () => { d.transitions = d.transitions.filter((t) => t !== tr); MK.sel = null; mkRender(); };
+    side.appendChild(del);
+  }
+}
+
