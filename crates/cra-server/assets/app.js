@@ -431,3 +431,127 @@ function fitView() {
   render();
 }
 
+// ===========================================================================
+// Инспектор (панель свойств справа)
+// ===========================================================================
+function renderInspector() {
+  const body = $("inspector-body");
+  body.textContent = "";
+  if (selEdge) { renderEdgeInspector(body); return; }
+  const n = selected ? nodeById(selected) : null;
+  if (!n) { body.innerHTML = '<p class="hint">Выберите узел или связь, чтобы задать параметры.</p>'; return; }
+
+  body.appendChild(el("h3", {}, (n.role === "gate" ? "Логический элемент" : n.role === "sfc" ? "Узел СФЦ" : "Событие")));
+
+  // id
+  body.appendChild(field("Идентификатор", inputEl("text", n.id, (v) => {
+    v = v.trim();
+    if (!v || nodeById(v) && v !== n.id) { setStatus("id пустой или занят", "err"); return; }
+    const old = n.id;
+    for (const e of graph.edges) { if (e.parent === old) e.parent = v; if (e.child === old) e.child = v; }
+    n.id = v; if (selected === old) selected = v;
+    render();
+  })));
+
+  // gate op / k
+  if (n.role === "gate") {
+    body.appendChild(field("Операция", selectEl(Object.keys(OP_LABEL).map((o) => [o, OP_LABEL[o]]), n.op, (v) => {
+      n.op = v; renderInspector(); render();
+    })));
+    if (n.op === "atleast") {
+      body.appendChild(field("k (порог)", inputEl("number", n.k || 2, (v) => { n.k = Math.max(1, +v || 1); render(); })));
+    }
+  }
+
+  // distribution (events + sfc nodes)
+  if (n.role === "event" || n.role === "sfc") {
+    if (n.role === "sfc") {
+      body.appendChild(fieldRow(checkboxEl(!!n.dist, (on) => {
+        n.dist = on ? { type: "fixed", q: 0.1 } : null; renderInspector(); render();
+      }), "Есть элемент (не фиктивный)"));
+    }
+    if (n.dist) buildDistEditor(body, n);
+    if (n.role === "sfc" && childrenEdges(n.id).length > 0) {
+      body.appendChild(el("p", { class: "meta" },
+        "Тип входов (И / ИЛИ) задаётся на каждой дуге — выделите связь."));
+    }
+  }
+
+  // top marker
+  body.appendChild(fieldRow(checkboxEl(!!n.top, (on) => {
+    graph.nodes.forEach((x) => (x.top = false));
+    n.top = on; render();
+  }), graph.kind === "sfc" ? "Вершина (критерий)" : "Вершинное событие"));
+
+  const del = el("button", { class: "del" }, "Удалить узел");
+  del.onclick = () => deleteNode(n.id);
+  body.appendChild(del);
+}
+
+// Canonical СФЦ arc editor: kind (conjunctive/disjunctive) + output (direct/inverse).
+function renderEdgeInspector(body) {
+  const e = edgeByPair(selEdge.parent, selEdge.child);
+  if (!e) { selEdge = null; body.innerHTML = '<p class="hint">Связь удалена.</p>'; return; }
+  body.appendChild(el("h3", {}, "Связь (дуга)"));
+  body.appendChild(el("div", { class: "meta" }, `${e.child} → ${e.parent}`));
+  if (graph.kind === "sfc") {
+    body.appendChild(field("Тип дуги", selectEl(
+      [["disj", "Дизъюнктивная (ИЛИ)"], ["conj", "Конъюнктивная (И)"]],
+      e.conj ? "conj" : "disj", (v) => { e.conj = v === "conj"; render(); renderInspector(); })));
+    body.appendChild(field("Выход", selectEl(
+      [["direct", "Прямой"], ["inverse", "Инверсный (¬)"]],
+      e.inverse ? "inverse" : "direct", (v) => { e.inverse = v === "inverse"; render(); renderInspector(); })));
+    body.appendChild(el("p", { class: "meta" },
+      "Функция вершины: y = x · И(конъюнктивные) · ИЛИ(дизъюнктивные)."));
+  } else {
+    body.appendChild(el("p", { class: "meta" }, "Связь — вход логического элемента."));
+  }
+  const del = el("button", { class: "del" }, "Удалить связь");
+  del.onclick = () => deleteEdge(e.parent, e.child);
+  body.appendChild(del);
+}
+
+function buildDistEditor(body, n) {
+  body.appendChild(field("Распределение", selectEl(
+    Object.keys(DIST_NAMES).map((t) => [t, DIST_NAMES[t]]), n.dist.type, (v) => {
+      n.dist = defaultDist(v); renderInspector(); render();
+    })));
+  if (n.dist.type === "markov") { buildMarkovEditor(body, n); return; }
+  for (const [key, label, def, opt] of DIST_SCHEMA[n.dist.type]) {
+    const cur = n.dist[key] != null ? n.dist[key] : "";
+    body.appendChild(field(label, inputEl("text", cur, (v) => {
+      v = v.trim();
+      if (v === "" && opt) { delete n.dist[key]; }
+      else { const num = +v; if (isFinite(num)) n.dist[key] = num; }
+      render();
+    })));
+  }
+}
+function defaultDist(type) {
+  if (type === "markov") return { type: "markov", states: ["ok", "fail"],
+    transitions: [{ from: "ok", to: "fail", rate: 1e-3 }], failed: ["fail"], steady: false };
+  const d = { type };
+  for (const [k, , def, opt] of DIST_SCHEMA[type]) if (!opt) d[k] = def;
+  return d;
+}
+
+function buildMarkovEditor(body, n) {
+  const d = n.dist;
+  normalizeMarkovDist(d);
+  mkEnsurePos(d);
+  // Read-only preview of the chain right in the inspector.
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("class", "mk-preview");
+  body.appendChild(svg);
+  mkDrawPreview(svg, d);
+
+  const summary = el("div", { class: "meta" },
+    `${(d.states || []).length} состояний · ${(d.transitions || []).length} переходов · ` +
+    `отказ: ${(d.failed || []).join(", ") || "—"}` + (d.steady ? " · стационарный" : ""));
+  body.appendChild(summary);
+
+  const open = el("button", { class: "mk-open" }, "🗺 Открыть диаграмму переходов");
+  open.onclick = () => openMarkov(n);
+  body.appendChild(open);
+}
+
