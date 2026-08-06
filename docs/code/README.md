@@ -1,0 +1,77 @@
+# CRA — документация по каждому файлу
+
+Здесь разобран **каждый файл** репозитория: какую задачу он решает, как
+работает его алгоритм, и разобранный пример с настоящими числами.
+
+Предполагается, что читатель **не знает ничего** ни о теории надёжности, ни о
+Rust, ни об используемых алгоритмах. Сначала прочитайте вводную главу, потом
+идите по порядку.
+
+## Порядок чтения
+
+| № | Документ | О чём |
+|---|---|---|
+| 0 | [00-concepts.md](00-concepts.md) | **Начните отсюда.** Что вообще считает программа и все термины, которые будут дальше. |
+| 1 | [core-lib-rs.md](core-lib-rs.md) | `crates/cra-core/src/lib.rs` — оглавление движка |
+| 2 | [core-model-rs.md](core-model-rs.md) | `model.rs` — внутренний логический граф, к которому сводится всё |
+| 3 | [core-dist-rs.md](core-dist-rs.md) | `dist.rs` — как один элемент отказывает во времени |
+| 4 | [core-markov-rs.md](core-markov-rs.md) | `markov.rs` — элементы с внутренними состояниями (марковские / полумарковские) |
+| 5 | [core-module-rs.md](core-module-rs.md) | `module.rs` — декомпозиция Дютюи–Рози (почему большие схемы считаются быстро) |
+| 6 | [core-bdd-rs.md](core-bdd-rs.md) | `bdd.rs` — двоичные диаграммы решений: точная вероятность и минимальные наборы |
+| 7 | [core-analysis-rs.md](core-analysis-rs.md) | `analysis.rs` — конвейер, связывающий всё вместе |
+| 8 | [core-io-rs.md](core-io-rs.md) | `io.rs` — формат JSON и его перевод в логический граф |
+| 9 | [core-tests-rs.md](core-tests-rs.md) | `tests/integration.rs` — доказательства правильности |
+| 10 | [cli-main-rs.md](cli-main-rs.md) | `crates/cra-cli/src/main.rs` и два примера моделей |
+| 11 | [server-main-rs.md](server-main-rs.md) | `crates/cra-server/src/main.rs` — точка входа службы |
+| 12 | [server-config-rs.md](server-config-rs.md) | `config.rs` — настройки из переменных окружения |
+| 13 | [server-http-rs.md](server-http-rs.md) | `http.rs` — HTTP/1.1, написанный вручную |
+| 14 | [server-server-rs.md](server-server-rs.md) | `server.rs` — цикл приёма связей и пул потоков |
+| 15 | [server-handlers-rs.md](server-handlers-rs.md) | `handlers.rs` — маршрутизация и endpoint `/api/analyze` |
+| 16 | [server-auth-rs.md](server-auth-rs.md) | `auth.rs` — три режима аутентификации |
+| 17 | [server-audit-rs.md](server-audit-rs.md) | `audit.rs` — журнал безопасности |
+| 18 | [server-assets-rs.md](server-assets-rs.md) | `assets.rs` — встраивание веб-интерфейса в бинарник |
+| 19 | [server-tests-rs.md](server-tests-rs.md) | `tests/http_smoke.rs` — сквозные HTTP-тесты |
+| 20 | [web-index-html.md](web-index-html.md) | `assets/index.html` — каркас страницы |
+| 21 | [web-app-js.md](web-app-js.md) | `assets/app.js` — визуальный редактор (самый большой файл) |
+| 22 | [web-style-css.md](web-style-css.md) | `assets/style.css` — оформление |
+| 23 | [build-and-deploy.md](build-and-deploy.md) | `Cargo.toml` × 4, `Cargo.lock`, `README.md`, `.gitignore`, `deploy/*` |
+
+Покрыты все файлы репозитория (кроме содержимого `out/`, которое генерируется
+и в историю не входит).
+
+## Суть в одном абзаце
+
+Вы рисуете схему системы — насосы, задвижки, датчики — и логику того, как их
+отказы складываются в отказ системы. CRA превращает эту схему в булеву
+формулу, разбивает формулу на независимые части, вычисляет **точную**
+вероятность отказа системы в заданный момент времени и выдаёт **минимальные
+комбинации отказов элементов**, которые эту систему роняют. Поставляется как
+библиотека, как программа командной строки и как самодостаточная HTTP-служба с
+веб-интерфейсом.
+
+## Где что лежит
+
+```
+cra/
+├── Cargo.toml                      workspace: какие крейты существуют
+├── README.md                       руководство пользователя (формат входа, развёртывание)
+├── crates/
+│   ├── cra-core/                   ДВИЖОК. Не зависит ни от CLI, ни от сервера.
+│   │   ├── src/lib.rs                список модулей и публичный API
+│   │   ├── src/model.rs              внутренний логический граф
+│   │   ├── src/dist.rs               законы отказа элементов
+│   │   ├── src/markov.rs             многосостоянийные элементы
+│   │   ├── src/module.rs             разбиение на независимые части
+│   │   ├── src/bdd.rs                двоичные диаграммы решений
+│   │   ├── src/analysis.rs           конвейер расчёта
+│   │   ├── src/io.rs                 JSON на входе / JSON на выходе
+│   │   └── tests/integration.rs      сквозные проверки против ручного счёта
+│   ├── cra-cli/                    JSON на stdin → JSON на stdout
+│   └── cra-server/                 HTTP-служба и встроенный веб-интерфейс
+├── deploy/                         systemd-юнит и пример TLS-прокси
+└── docs/                           эта документация
+```
+
+Главный структурный факт: **`cra-core` ничего не знает ни о CLI, ни о
+сервере.** Оба фронтенда зовут одну и ту же функцию `cra::analyze_request`.
+Всё остальное — упаковка.
