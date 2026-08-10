@@ -119,6 +119,8 @@ button.pal { width: 100%; text-align: left; padding: 7px 10px; }
 .field input, .field select { width: 100%; }
 .field.row { flex-direction: row; align-items: center; gap: 6px; }
 .field.row input[type=checkbox] { width: auto; }
+.mk-trans { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 4px; margin-bottom: 4px; }
+.mk-trans input { width: 100%; }
 .inspector .del { color: var(--err); width: 100%; margin-top: 6px; }
 .inspector .mini { padding: 3px 7px; font-size: 12px; }
 .hint { color: var(--muted); font-size: 13px; }
@@ -154,3 +156,60 @@ td.num { font-family: var(--mono); text-align: right; white-space: nowrap; }
 .err-box { color: var(--err); font-family: var(--mono); font-size: 13px; white-space: pre-wrap;
   background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px; }
 .meta { color: var(--muted); font-size: 12px; margin-top: 10px; }
+
+/* ---- Markov preview inside inspector ---- */
+.mk-preview { width: 100%; height: 150px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); margin: 4px 0 8px; display: block; }
+.mk-open { width: 100%; }
+
+/* ---- Markov modal ---- */
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.45);
+  display: flex; align-items: center; justify-content: center; z-index: 50; }
+.modal.hidden { display: none; }
+.modal-card { width: min(920px, 94vw); height: min(640px, 92vh); background: var(--panel);
+  border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0,0,0,.4); }
+.modal-head { display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 14px; }
+.mk-toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+  border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.mk-toolbar .chk { display: flex; align-items: center; gap: 4px; }
+.mk-toolbar .chk input { width: auto; }
+.mk-main { flex: 1; display: flex; min-height: 0; }
+#mk-canvas { flex: 1; background:
+  radial-gradient(circle, var(--border) 1px, transparent 1px) 0 0 / 22px 22px; outline: none; }
+.mk-side { flex: 0 0 220px; border-left: 1px solid var(--border); padding: 12px; overflow-y: auto; }
+
+.mk-state .circle { fill: var(--event); stroke: var(--event-br); stroke-width: 2; cursor: grab; }
+.mk-state.failed .circle { fill: #f6dede; stroke: var(--err); }
+@media (prefers-color-scheme: dark) { .mk-state.failed .circle { fill: #3a1c1c; } }
+.mk-state.initial .circle { stroke-dasharray: 4 2; }
+.mk-state.selected .circle { stroke: var(--sel); stroke-width: 3; }
+.mk-state text { font: 12px system-ui; fill: var(--text); pointer-events: none; user-select: none; text-anchor: middle; }
+.mk-state .init-badge { font-size: 9px; fill: var(--accent); }
+.mk-port { fill: var(--panel); stroke: var(--edge); stroke-width: 1.5; cursor: crosshair; }
+.mk-port:hover { fill: var(--accent); }
+.mk-tr { stroke: var(--edge); stroke-width: 2; fill: none; marker-end: url(#mk-arrow); cursor: pointer; }
+.mk-tr:hover, .mk-tr.selected { stroke: var(--accent); }
+.mk-tr-hit { stroke: transparent; stroke-width: 14; fill: none; cursor: pointer; }
+.mk-tr-label { font: 11px var(--mono); fill: var(--accent); pointer-events: none; text-anchor: middle; }
+#mk-arrow path { fill: var(--edge); }
+.mk-temp { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 4 3; fill: none; }
+
+/* ---- q(t) chart in Markov modal ---- */
+.mk-chart { flex: 0 0 186px; border-top: 1px solid var(--border); display: flex; flex-direction: column; }
+.mk-chart-head { display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 13px; }
+.mk-chart-head b { font-family: var(--mono); }
+.mk-chart-head input { width: 80px; }
+#mk-chart-svg { flex: 1; width: 100%; }
+.ch-axis { stroke: var(--border); stroke-width: 1; }
+.ch-grid { stroke: var(--border); stroke-width: 1; stroke-dasharray: 2 3; opacity: .6; }
+.ch-tick { font: 10px var(--mono); fill: var(--muted); }
+.ch-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.ch-end { fill: var(--accent); }
+.ch-end-label { font: 11px var(--mono); fill: var(--text); }
+.ch-cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.ch-dot { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
+.ch-tip { font: 11px var(--mono); fill: var(--text); }
+.ch-tip-bg { fill: var(--panel); stroke: var(--border); }
+.ch-title { font: 11px system-ui; fill: var(--muted); }
