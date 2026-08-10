@@ -62,3 +62,28 @@ button:disabled { opacity: .5; cursor: default; }
 #canvas { width: 100%; height: 100%; display: block; background:
   radial-gradient(circle, var(--border) 1px, transparent 1px) 0 0 / 22px 22px;
   outline: none; cursor: default; }
+.node rect, .node .body { cursor: grab; }
+.node.dragging rect { cursor: grabbing; }
+.node text { font: 12px system-ui, sans-serif; fill: var(--text); pointer-events: none; user-select: none; }
+.node .sub { font-size: 10px; fill: var(--muted); font-family: var(--mono); }
+.node.event .body { fill: var(--event); stroke: var(--event-br); }
+.node.gate .body, .node.sfc .body { fill: var(--gate); stroke: var(--gate-br); }
+.node .body { stroke-width: 1.5; rx: 8; }
+.node.top .body { stroke-width: 3; }
+.node.selected .body { stroke: var(--sel); stroke-width: 3; }
+.node .top-badge { fill: var(--sel); font-size: 9px; }
+.port { fill: var(--panel); stroke: var(--edge); stroke-width: 1.5; cursor: crosshair; }
+.port:hover { fill: var(--accent); }
+.edge { stroke: var(--edge); stroke-width: 2; fill: none; marker-end: url(#arrow); cursor: pointer; }
+.edge.inverse { stroke-dasharray: 5 3; }
+.edge:hover { stroke: var(--accent); }
+.edge.selected { stroke: var(--sel); stroke-width: 3; }
+/* Canonical СФЦ arc kinds: conjunctive (И) greenish, disjunctive (ИЛИ) default. */
+.edge.conj { stroke: var(--gate-br); }
+.edge.conj.selected { stroke: var(--sel); }
+.edge-hit { stroke: transparent; stroke-width: 12; fill: none; cursor: pointer; }
+.edge-label { font: 11px var(--mono); fill: var(--accent); pointer-events: none; }
+.edge-label.conj { fill: var(--gate-br); }
+.edge-label.disj { fill: var(--accent); }
+#arrow path { fill: var(--edge); }
+.temp-edge { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 4 3; fill: none; }
