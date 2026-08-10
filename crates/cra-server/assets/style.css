@@ -1,0 +1,64 @@
+/* Стили веб-интерфейса CRA. Цвета заданы переменными в :root, so light and
+   dark themes share one set of tokens. Ниже — блоки по частям страницы. */
+:root {
+  --bg: #f4f5f7;
+  --panel: #ffffff;
+  --border: #d5d9e0;
+  --text: #1c2330;
+  --muted: #6b7280;
+  --accent: #1f5fb0;
+  --accent-fg: #ffffff;
+  --ok: #17803d;
+  --warn: #b45309;
+  --err: #b91c1c;
+  --event: #e8f0fb;
+  --event-br: #7fa8d8;
+  --gate: #eef3e9;
+  --gate-br: #8aab6f;
+  --sel: #e8931f;
+  --edge: #7a8494;
+  --mono: ui-monospace, "Cascadia Code", "Consolas", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f141b; --panel: #1a212b; --border: #2b3543;
+    --text: #e6e9ef; --muted: #93a1b3; --accent: #4d90d8; --accent-fg: #0f141b;
+    --event: #1c2c40; --event-br: #3d6ea0; --gate: #26301f; --gate-br: #5f7f45;
+    --edge: #5a6675;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 14px/1.5 system-ui, "Segoe UI", sans-serif;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+
+/* ---- header ---- */
+header {
+  display: flex; align-items: center; gap: 12px; padding: 8px 16px;
+  background: var(--panel); border-bottom: 1px solid var(--border); flex: 0 0 auto;
+}
+header h1 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: .5px; }
+header .sub { color: var(--muted); font-size: 12px; }
+.run { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+label { color: var(--muted); font-size: 12px; }
+select, input, button {
+  font: inherit; padding: 5px 9px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+}
+button { cursor: pointer; }
+button:disabled { opacity: .5; cursor: default; }
+#analyze { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+.secondary { background: transparent; }
+.danger { color: var(--err); }
+.status { font-size: 12px; min-width: 90px; }
+.status.ok { color: var(--ok); } .status.err { color: var(--err); }
+
+/* ---- canvas ---- */
+#tab-diagram { display: flex; flex: 1 1 auto; min-height: 0; }
+.canvas-wrap { flex: 1 1 auto; min-width: 0; position: relative; }
+#canvas { width: 100%; height: 100%; display: block; background:
+  radial-gradient(circle, var(--border) 1px, transparent 1px) 0 0 / 22px 22px;
+  outline: none; cursor: default; }

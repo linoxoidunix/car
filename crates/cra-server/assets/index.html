@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<!--
+  Главная страница веб-интерфейса CRA. Пока это каркас: шапка с параметрами
+  расчёта и пустой холст. Вся логика — в app.js.
+-->
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CRA — анализ надёжности</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>CRA</h1>
+    <span class="sub">анализ надёжности схем · деревья отказов · СФЦ</span>
+    <div class="run">
+      <label for="kind">Модель:</label>
+      <select id="kind">
+        <option value="fault_tree">Дерево отказов</option>
+        <option value="sfc">СФЦ</option>
+      </select>
+      <label for="mtime">t:</label>
+      <input id="mtime" type="text" value="1000" size="8" title="Время (или список через запятую)">
+      <button id="analyze" type="button">▶ Рассчитать</button>
+      <span id="status" class="status"></span>
+    </div>
+  </header>
+
+  <!-- ============ Холст схемы ============ -->
+  <div id="tab-diagram">
+    <div class="canvas-wrap">
+      <svg id="canvas" tabindex="0">
+        <g id="viewport">
+          <g id="nodes-layer"></g>
+        </g>
+      </svg>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
