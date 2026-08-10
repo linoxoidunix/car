@@ -71,8 +71,14 @@ fn route(req: &Request, principal: &str) -> Response {
                 None => Response::error(404, "unknown example"),
             }
         }
+        // Метка ассетов для автоперезагрузки страницы; только в отладке.
+        #[cfg(debug_assertions)]
+        ("GET", "/__dev/token") => match assets::dev::token() {
+            Some(t) => Response::text(200, &t),
+            None => Response::error(404, "dev asset mode is off"),
+        },
         ("GET", p) | ("HEAD", p) => match assets::find(p) {
-            Some(a) => Response::new(200, a.content_type, a.bytes.to_vec()),
+            Some(a) => Response::new(200, a.content_type, assets::body(a)),
             None => Response::error(404, "not found"),
         },
         (_, "/api/analyze") => Response::error(405, "method not allowed"),
