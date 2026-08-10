@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
   Главная страница веб-интерфейса CRA. One page, two tabs: "Схема" (visual
-  editor) и "JSON". Вся логика — в app.js.
+  editor) и "JSON". Внизу — общая панель результатов. Вся логика — в app.js.
 -->
 <html lang="ru">
 <head>
@@ -85,6 +85,17 @@
       <textarea id="input" spellcheck="false" placeholder="JSON-запрос…"></textarea>
     </div>
   </div>
+
+  <!-- ============ Результаты (общие) ============ -->
+  <section id="results-drawer" class="results-drawer">
+    <div class="drawer-head">
+      <span>Результаты</span>
+      <button id="drawer-toggle" type="button" class="secondary">свернуть ▾</button>
+    </div>
+    <div id="results" class="results">
+      <p class="hint">Постройте схему и нажмите «Рассчитать».</p>
+    </div>
+  </section>
 
   <script src="/app.js"></script>
 </body>
