@@ -97,6 +97,47 @@
     </div>
   </section>
 
+  <!-- ============ Модальное окно: марковская диаграмма ============ -->
+  <div id="mk-modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <span>Марковская диаграмма переходов — узел <b id="mk-node-id"></b></span>
+        <button id="mk-close" class="secondary">✕ Закрыть</button>
+      </div>
+      <div class="mk-toolbar">
+        <button id="mk-add" class="mini">+ Состояние</button>
+        <label>Начальное:</label>
+        <select id="mk-initial"></select>
+        <label class="chk"><input type="checkbox" id="mk-steady"> Стационарный режим</label>
+        <span class="hint">Тянуть от порта (○) состояния к другому — переход. Клик по стрелке/кружку — выбрать. Del — удалить.</span>
+      </div>
+      <div class="mk-main">
+        <svg id="mk-canvas" tabindex="0">
+          <defs>
+            <marker id="mk-arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z"></path>
+            </marker>
+          </defs>
+          <g id="mk-edges"></g>
+          <g id="mk-states"></g>
+          <g id="mk-temp"></g>
+        </svg>
+        <div id="mk-side" class="mk-side"></div>
+      </div>
+      <div class="mk-chart">
+        <div class="mk-chart-head">
+          <span>Вероятность отказа узла&nbsp; <b>q(t)</b></span>
+          <label for="mk-tmax">t max:</label>
+          <input id="mk-tmax" type="text" size="8" placeholder="авто">
+          <button id="mk-plot" class="mini">Построить график</button>
+          <span id="mk-plot-status" class="hint"></span>
+        </div>
+        <svg id="mk-chart-svg"></svg>
+      </div>
+    </div>
+  </div>
+
   <script src="/app.js"></script>
 </body>
 </html>
