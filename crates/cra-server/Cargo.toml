@@ -1,0 +1,15 @@
+[package]
+name = "cra-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Thin HTTP service wrapping the CRA engine"
+
+[[bin]]
+name = "cra-server"
+path = "src/main.rs"
+
+[dependencies]
+cra-core = { workspace = true }
+serde_json = { workspace = true }
