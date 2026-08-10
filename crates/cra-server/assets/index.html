@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!--
-  Главная страница веб-интерфейса CRA. Пока это каркас: шапка с параметрами
-  расчёта и пустой холст. Вся логика — в app.js.
+  Главная страница веб-интерфейса CRA. One page, two tabs: "Схема" (visual
+  editor) и "JSON". Вся логика — в app.js.
 -->
 <html lang="ru">
 <head>
@@ -14,6 +14,10 @@
   <header>
     <h1>CRA</h1>
     <span class="sub">анализ надёжности схем · деревья отказов · СФЦ</span>
+    <nav class="tabs">
+      <button class="tab active" data-tab="diagram">Схема</button>
+      <button class="tab" data-tab="json">JSON</button>
+    </nav>
     <div class="run">
       <label for="kind">Модель:</label>
       <select id="kind">
@@ -27,8 +31,8 @@
     </div>
   </header>
 
-  <!-- ============ Холст схемы ============ -->
-  <div id="tab-diagram">
+  <!-- ============ Вкладка: схема ============ -->
+  <div id="tab-diagram" class="tabview active">
     <aside class="palette">
       <div class="pal-title">Добавить</div>
       <div id="palette-buttons"></div>
@@ -68,6 +72,18 @@
         <p class="hint">Выберите узел, чтобы задать параметры.</p>
       </div>
     </aside>
+  </div>
+
+  <!-- ============ Вкладка: JSON ============ -->
+  <div id="tab-json" class="tabview">
+    <div class="json-pane">
+      <div class="toolbar">
+        <button id="from-diagram" type="button" class="secondary">◀ Из схемы</button>
+        <button id="format" type="button" class="secondary">Форматировать</button>
+        <span class="hint">Здесь можно отредактировать запрос вручную.</span>
+      </div>
+      <textarea id="input" spellcheck="false" placeholder="JSON-запрос…"></textarea>
+    </div>
   </div>
 
   <script src="/app.js"></script>

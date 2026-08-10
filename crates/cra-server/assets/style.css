@@ -42,6 +42,12 @@ header {
 }
 header h1 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: .5px; }
 header .sub { color: var(--muted); font-size: 12px; }
+.tabs { display: flex; gap: 4px; margin-left: 8px; }
+.tab {
+  border: 1px solid var(--border); background: transparent; color: var(--text);
+  padding: 5px 14px; border-radius: 6px; cursor: pointer; font: inherit;
+}
+.tab.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 .run { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 label { color: var(--muted); font-size: 12px; }
 select, input, button {
@@ -56,6 +62,11 @@ button:disabled { opacity: .5; cursor: default; }
 .status { font-size: 12px; min-width: 90px; }
 .status.ok { color: var(--ok); } .status.err { color: var(--err); }
 
+/* ---- tab views ---- */
+.tabview { display: none; flex: 1 1 auto; min-height: 0; }
+.tabview.active { display: flex; }
+#tab-diagram { }
+
 /* ---- palette ---- */
 .palette {
   flex: 0 0 168px; background: var(--panel); border-right: 1px solid var(--border);
@@ -67,7 +78,6 @@ button.pal { width: 100%; text-align: left; padding: 7px 10px; }
 .pal-hint { font-size: 11px; color: var(--muted); line-height: 1.4; }
 
 /* ---- canvas ---- */
-#tab-diagram { display: flex; flex: 1 1 auto; min-height: 0; }
 .canvas-wrap { flex: 1 1 auto; min-width: 0; position: relative; }
 #canvas { width: 100%; height: 100%; display: block; background:
   radial-gradient(circle, var(--border) 1px, transparent 1px) 0 0 / 22px 22px;
@@ -112,3 +122,9 @@ button.pal { width: 100%; text-align: left; padding: 7px 10px; }
 .inspector .del { color: var(--err); width: 100%; margin-top: 6px; }
 .inspector .mini { padding: 3px 7px; font-size: 12px; }
 .hint { color: var(--muted); font-size: 13px; }
+
+/* ---- json tab ---- */
+.json-pane { flex: 1; display: flex; flex-direction: column; }
+.json-pane .toolbar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+#input { flex: 1; border: 0; resize: none; padding: 12px; font-family: var(--mono);
+  font-size: 13px; background: var(--panel); color: var(--text); outline: none; tab-size: 2; }
