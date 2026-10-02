@@ -326,3 +326,32 @@ fn multiple_times() {
     assert!(r.results[0].top_probability.abs() < 1e-15);
     assert!((r.results[1].top_probability - (1.0 - (-1.0f64).exp())).abs() < 1e-12);
 }
+
+/// Files saved by the web editor carry the diagram geometry in a `layout`
+/// field next to the request (and per-state positions of Markov nodes). The
+/// engine must ignore it, so the same file opens in the editor and runs
+/// through the CLI. Same scheme as `sfc_series_parallel`: P = 0.891.
+#[test]
+fn editor_layout_field_is_ignored() {
+    let json = r#"{
+      "model": {
+        "type": "sfc",
+        "nodes": [
+          {"id": "n1", "dist": {"type": "fixed", "q": 0.1}},
+          {"id": "n2", "dist": {"type": "fixed", "q": 0.1}},
+          {"id": "n3", "dist": {"type": "fixed", "q": 0.1},
+           "inputs": [{"from": "n1", "conjunctive": false},
+                      {"from": "n2", "conjunctive": false}]}
+        ],
+        "criterion": {"target": "n3"}
+      },
+      "mission_time": 0,
+      "layout": {
+        "nodes": {"n1": {"x": 60, "y": 60}, "n2": {"x": 232, "y": 60},
+                  "n3": {"x": 146, "y": 172}},
+        "markov": {"n1": {"ok": {"x": 300, "y": 50}}}
+      }
+    }"#;
+    let r = run(json);
+    assert!((r.results[0].top_probability - 0.891).abs() < 1e-15);
+}
