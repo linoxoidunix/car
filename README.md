@@ -141,7 +141,10 @@ frontends.
 
 The web editor saves a scheme as an ordinary request with one extra field,
 `layout`, holding the diagram geometry. The engine ignores unknown fields, so a
-saved file also runs through the CLI as is (`cra scheme.json`).
+saved file also runs through the CLI as is (`cra scheme.json`). Its
+`cut_sets` / `path_sets` / `bdd` options are the editor's «Считать» checkboxes
+(all on by default, remembered by the browser), so the CLI computes the same
+as the editor did.
 
 ```jsonc
 "layout": {

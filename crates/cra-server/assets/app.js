@@ -28,6 +28,9 @@ const NODE_W = 132, NODE_H = 52;
 // Инструмент «Новая дуга» (СФЦ): с каким типом и выходом создаётся следующая
 // дуга. Это настройка редактора, а не схемы, — в документ не попадает.
 let arcStyle = { conj: false, inverse: false };
+// «Считать»: что, кроме вероятности вершины, просить у сервера. Тоже настройка
+// редактора (галочки в шапке панели результатов), изначально включено всё.
+let calc = { cut_sets: true, path_sets: true, bdd: true };
 
 // ---- схема параметров распределений (числовые поля) ----
 const DIST_SCHEMA = {
@@ -163,6 +166,24 @@ function setArcStyle(patch) {
   Object.assign(arcStyle, patch);
   try { localStorage.setItem("cra.arc", JSON.stringify(arcStyle)); } catch (e) {}
   renderArcTool();
+}
+// Выбор «Считать» хранится так же: он переживает перезагрузку, «Очистить» и
+// открытие файлов — флаги из открытого файла его не меняют.
+function loadCalc() {
+  try {
+    const s = JSON.parse(localStorage.getItem("cra.calc"));
+    if (s) for (const k of Object.keys(calc)) if (typeof s[k] === "boolean") calc[k] = s[k];
+  } catch (e) {}
+}
+function setCalc(key, on) {
+  calc[key] = on;
+  try { localStorage.setItem("cra.calc", JSON.stringify(calc)); } catch (e) {}
+  renderCalc();
+  // Вкладка JSON показывает документ схемы — с новыми флагами.
+  if ($("tab-json").classList.contains("active") && !jsonEdited && graph.nodes.length) setJsonText(graphToDocument().doc);
+}
+function renderCalc() {
+  for (const c of document.querySelectorAll("[data-calc]")) c.checked = calc[c.dataset.calc];
 }
 
 // ===========================================================================
@@ -1237,7 +1258,10 @@ function graphToRequest() {
   }
 
   const times = parseTimes($("mtime").value);
-  const req = { model, options: graph.options || { cut_sets: true, path_sets: true, max_order: 8 } };
+  // Пределы (max_order, cutoff…) — из открытого файла; что считать — из
+  // галочек «Считать». В сохранённый файл попадает то же, так что CLI по нему
+  // посчитает то же, что редактор.
+  const req = { model, options: Object.assign({}, graph.options || { max_order: 8 }, calc) };
   if (times.length > 1) req.times = times; else req.mission_time = times[0] || 0;
   return { req, errs };
 }
@@ -1562,10 +1586,8 @@ async function analyze() {
     payload = req;
     setJsonText(graphToDocument().doc);   // keep JSON tab in sync
   }
-  // Диаграммы ROBDD нужны только для показа в результатах: флаг добавляет
-  // сам расчёт, в документ (файл, вкладка JSON) он не попадает. Явное
-  // "bdd": false в JSON сохраняется.
-  if (payload && typeof payload === "object") payload.options = Object.assign({ bdd: true }, payload.options);
+  // Галочки «Считать» решают на любой вкладке — и для JSON, набранного руками.
+  if (payload && typeof payload === "object") payload.options = Object.assign({}, payload.options, calc);
   const kind = payload && payload.model && payload.model.type;
   openDrawer();
   setStatus("расчёт…");
@@ -1875,7 +1897,9 @@ function arcKeyAllowed(e) {
 // Ctrl+Z отменяет набранный текст).
 function editorKeyAllowed(e) {
   if (!$("tab-diagram").classList.contains("active") || !$("mk-modal").classList.contains("hidden")) return false;
-  return !(e.target.closest && e.target.closest("input, textarea, select, [contenteditable]"));
+  // Галочка своих клавиш, кроме пробела, не имеет: после щелчка по ней Del и
+  // Ctrl+Z по-прежнему относятся к схеме.
+  return !(e.target.closest && e.target.closest("input:not([type=checkbox]), textarea, select, [contenteditable]"));
 }
 
 // Галочка «успех p у всех»: отмечена — постоянные вероятности схемы задаются
@@ -1951,6 +1975,9 @@ $("format").addEventListener("click", () => {
   try { $("input").value = JSON.stringify(JSON.parse($("input").value), null, 2); setStatus("отформатировано", "ok"); }
   catch (e) { setStatus("некорректный JSON", "err"); }
 });
+for (const c of document.querySelectorAll("[data-calc]")) {
+  c.addEventListener("change", () => setCalc(c.dataset.calc, c.checked));
+}
 $("drawer-toggle").addEventListener("click", () => {
   const d = $("results-drawer"); const c = d.classList.toggle("collapsed");
   $("drawer-toggle").textContent = c ? "развернуть ▴" : "свернуть ▾";
@@ -1993,6 +2020,8 @@ for (const b of document.querySelectorAll("[data-arc]")) {
 // ---- init ----
 load();
 loadArcStyle();
+loadCalc();
+renderCalc();
 try { $("file-name").value = localStorage.getItem("cra.file") || ""; } catch (e) {}
 $("kind").value = graph.kind;
 buildPalette();
