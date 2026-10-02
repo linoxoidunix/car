@@ -242,6 +242,34 @@ td.num { font-family: var(--mono); text-align: right; white-space: nowrap; }
 .chips span { display: inline-block; font-family: var(--mono); font-size: 11px;
   background: var(--bg); border: 1px solid var(--border); border-radius: 999px; padding: 0 8px; margin: 1px; }
 .warn { color: var(--warn); }
+
+/* ---- ROBDD в результатах ---- */
+.results details.bdd > summary { font-size: 13px; font-weight: 600; color: var(--muted);
+  margin: 14px 0 5px; cursor: pointer; }
+.bdd-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 6px; }
+.bdd-tabs button { padding: 2px 8px; font: 12px var(--mono); background: transparent; }
+.bdd-tabs button.on { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.bdd-view { overflow: auto; max-height: 440px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--panel); }
+.bdd-view svg { display: block; }
+.bdd-view .warn { margin: 10px 12px; }
+.bdd-level-line { stroke: var(--border); stroke-dasharray: 2 4; }
+.bdd-level { font: 11px var(--mono); fill: var(--text); }
+.bdd-level.p { fill: var(--muted); font-size: 10px; }
+.bdd-root { font: 11px system-ui, sans-serif; fill: var(--muted); text-anchor: middle; }
+/* Ветки: «= 1» сплошная, «= 0» пунктир — различимы и без цвета. */
+.bdd-hi { stroke: var(--edge); stroke-width: 1.6; fill: none; }
+.bdd-lo { stroke: var(--edge); stroke-width: 1.4; stroke-dasharray: 5 4; fill: none; }
+/* Узел-событие — эллипс цвета событий, узел-модуль — прямоугольник цвета
+   элементов (по нему можно щёлкнуть), лист — квадрат с 0 или 1. */
+.bdd-node ellipse { fill: var(--event); stroke: var(--event-br); stroke-width: 1.5; }
+.bdd-node.mod rect { fill: var(--gate); stroke: var(--gate-br); stroke-width: 2; }
+.bdd-node.mod { cursor: pointer; }
+.bdd-node.mod:hover rect { stroke: var(--accent); }
+.bdd-node.leaf rect { fill: var(--panel); stroke: var(--text); stroke-width: 1.5; }
+.bdd-node text { font: 12px var(--mono); fill: var(--text); text-anchor: middle;
+  dominant-baseline: central; pointer-events: none; }
+.bdd-node.leaf text { font-weight: 700; }
 .err-box { color: var(--err); font-family: var(--mono); font-size: 13px; white-space: pre-wrap;
   background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
 .meta { color: var(--muted); font-size: 12px; margin-top: 10px; }
