@@ -86,7 +86,7 @@ cra-server              # configured via environment variables, see --help
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /` | web frontend (JSON editor, results, cut/path sets) |
+| `GET /` | web frontend (diagram + JSON editor, open/save files, results) |
 | `POST /api/analyze` | analyze a model — same request/response JSON as the CLI |
 | `GET /api/examples/<name>` | built-in example request |
 | `GET /healthz` | liveness probe |
@@ -134,6 +134,24 @@ frontends.
   }
 }
 ```
+
+### Editor files (`layout`)
+
+The web editor saves a scheme as an ordinary request with one extra field,
+`layout`, holding the diagram geometry. The engine ignores unknown fields, so a
+saved file also runs through the CLI as is (`cra scheme.json`).
+
+```jsonc
+"layout": {
+  "nodes":  { "pump_a": { "x": 60, "y": 60 }, ... },          // node id -> top-left corner
+  "markov": { "power": { "ok": { "x": 300, "y": 50 }, ... } } // Markov node -> state centres
+}
+```
+
+Opening a request without `layout` (hand-written, or from another tool) lays
+the scheme out automatically: layered by longest path to the top, inputs above
+their consumers, crossings reduced by barycentre sweeps. A bare `model` object
+without the request wrapper is accepted too.
 
 ### Fault tree
 
@@ -253,7 +271,7 @@ is always **exact** (BDD), independent of set truncation.
 
 ```
 cargo build --release              # binaries: cra (CLI), cra-server
-cargo test                         # 40 tests across the workspace
+cargo test                         # 41 tests across the workspace
 ./target/release/cra crates/cra-cli/examples/fault_tree.json --pretty
 CRA_ADDR=127.0.0.1:8080 ./target/release/cra-server
 ```

@@ -473,7 +473,9 @@ if (dist.type === "exponential") return { from: tr.from, to: tr.to, rate: +dist.
 
 Движок поле `layout` не читает: serde по умолчанию пропускает незнакомые поля.
 Поэтому сохранённый из браузера файл без переделки считается и из командной
-строки — `cra схема.json`.
+строки — `cra схема.json`. Чтобы никто случайно не сломал это, добавив
+`deny_unknown_fields`, есть тест `editor_layout_field_is_ignored` в
+[`tests/integration.rs`](core-tests-rs.md).
 
 `layout.markov` хранит положения состояний марковских узлов (в редакторе они
 лежат в `dist._pos`, а `cleanDist` их в модель не пропускает). Координаты
