@@ -1638,7 +1638,12 @@ function renderResponse(resp, kind) {
   out.append(table);
   // Диаграммы — сразу под вероятностью, которую по ним посчитали: под списком
   // из сотен наборов их было бы не найти.
-  const bdd = renderBdd(resp, kind); if (bdd) out.append(bdd);
+  const bdd = renderBdd(resp, kind);
+  if (bdd) out.append(bdd);
+  // Движок без выдачи ROBDD молча пропускает незнакомый флаг. Так бывает, когда
+  // в режиме разработки ассеты уже новые, а сервер не перезапущен.
+  else if (calc.bdd) out.append(el("p", { class: "warn" }, "⚠ ROBDD запрошены, но сервер их не вернул: " +
+    "похоже, он запущен до обновления движка. Пересоберите и перезапустите сервер."));
   const cuts = renderSets("Минимальные сечения (МНС)", resp.cut_sets); if (cuts) out.append(cuts);
   const paths = renderSets("Минимальные пути (МНП)", resp.path_sets); if (paths) out.append(paths);
   for (const w of resp.warnings || []) out.append(el("p", { class: "warn" }, "⚠ " + w));
