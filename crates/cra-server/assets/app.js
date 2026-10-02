@@ -30,7 +30,15 @@ const NODE_W = 132, NODE_H = 52;
 let arcStyle = { conj: false, inverse: false };
 // «Считать»: что, кроме вероятности вершины, просить у сервера. Тоже настройка
 // редактора (галочки в шапке панели результатов), изначально включено всё.
-let calc = { cut_sets: true, path_sets: true, bdd: true, importance: true };
+let calc = { cut_sets: true, path_sets: true, bdd: true, importance: true, curve: true };
+// Флаги движка (опции запроса). curve — только интерфейс: кривая P(t) в
+// результатах, в запрос и в файл не попадает.
+const CALC_ENGINE = ["cut_sets", "path_sets", "importance", "bdd"];
+function calcOptions() {
+  const o = {};
+  for (const k of CALC_ENGINE) o[k] = calc[k];
+  return o;
+}
 
 // ---- схема параметров распределений (числовые поля) ----
 const DIST_SCHEMA = {
@@ -1058,7 +1066,10 @@ async function mkPlot() {
 function drawChart(svg, st, pts, xmax, opts) {
   const rect = svg.getBoundingClientRect();
   const W = rect.width, H = rect.height;
-  if (W < 10 || H < 10) { setTimeout(() => drawChart(svg, st, pts, xmax, opts), 40); return; }
+  if (W < 10 || H < 10) {
+    if (svg.isConnected) setTimeout(() => drawChart(svg, st, pts, xmax, opts), 40);
+    return;
+  }
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   svg.textContent = "";
   const ymax = opts.ymax || 1;
@@ -1280,7 +1291,7 @@ function graphToRequest() {
   // Пределы (max_order, cutoff…) — из открытого файла; что считать — из
   // галочек «Считать». В сохранённый файл попадает то же, так что CLI по нему
   // посчитает то же, что редактор.
-  const req = { model, options: Object.assign({}, graph.options || { max_order: 8 }, calc) };
+  const req = { model, options: Object.assign({}, graph.options || { max_order: 8 }, calcOptions()) };
   if (times.length > 1) req.times = times; else req.mission_time = times[0] || 0;
   return { req, errs };
 }
@@ -1606,8 +1617,20 @@ async function analyze() {
     setJsonText(graphToDocument().doc);   // keep JSON tab in sync
   }
   // Галочки «Считать» решают на любой вкладке — и для JSON, набранного руками.
-  if (payload && typeof payload === "object") payload.options = Object.assign({}, payload.options, calc);
-  const kind = payload && payload.model && payload.model.type;
+  if (!payload || typeof payload !== "object") { setStatus("запрос должен быть JSON-объектом", "err"); return; }
+  payload.options = Object.assign({}, payload.options, calcOptions());
+  const view = { kind: payload.model && payload.model.type, shown: 0, curve: null };
+  // Кривая P(t): к моментам запроса добавляется сетка 0…max. Свои моменты идут
+  // первыми — по первому движок считает наборы, значимость и ROBDD, — а таблица
+  // показывает только их. Модули и BDD строятся один раз, так что лишние точки
+  // почти ничего не стоят.
+  const base = Array.isArray(payload.times) && payload.times.length ? payload.times.slice()
+    : [payload.mission_time != null ? payload.mission_time : 0];
+  view.shown = base.length;
+  if (calc.curve) {
+    const grid = curveGrid(base);
+    if (grid.length) { payload.times = base.concat(grid); delete payload.mission_time; view.curve = base; }
+  }
   openDrawer();
   setStatus("расчёт…");
   $("analyze").disabled = true;
@@ -1618,7 +1641,7 @@ async function analyze() {
     });
     const data = await r.json();
     if (!r.ok) { showError(data.error || "HTTP " + r.status); setStatus("ошибка расчёта", "err"); return; }
-    renderResponse(data, kind);
+    renderResponse(data, view);
     setStatus("готово за " + Math.round(performance.now() - t0) + " мс", "ok");
   } catch (e) { setStatus("сетевая ошибка: " + e.message, "err"); }
   finally { $("analyze").disabled = false; }
@@ -1646,15 +1669,36 @@ function renderSets(title, report) {
   box.append(table);
   return box;
 }
-function renderResponse(resp, kind) {
+// Сетка кривой: CURVE_STEPS равных шагов от 0 до наибольшего момента, без
+// моментов, которые уже есть в запросе.
+const CURVE_STEPS = 60;
+function curveGrid(base) {
+  const tmax = Math.max(...base.map(Number));
+  if (!(isFinite(tmax) && tmax > 0)) return [];
+  const have = new Set(base.map(Number));
+  const grid = [];
+  for (let i = 0; i <= CURVE_STEPS; i++) {
+    const t = (tmax * i) / CURVE_STEPS;
+    if (!have.has(t)) grid.push(t);
+  }
+  return grid;
+}
+
+// view: kind — тип модели из запроса; shown — сколько первых результатов —
+// моменты из запроса (остальные — сетка кривой); curve — эти моменты, если
+// кривая строится.
+function renderResponse(resp, view) {
+  const kind = view.kind;
+  const shown = resp.results.slice(0, view.shown || resp.results.length);
   const out = $("results"); out.textContent = "";
   out.append(el("h2", {}, resp.interpretation));
-  if (resp.results.length === 1) out.append(el("div", { class: "kpi" }, fmtP(resp.results[0].top_probability)));
+  if (shown.length === 1) out.append(el("div", { class: "kpi" }, fmtP(shown[0].top_probability)));
   const table = el("table");
   table.append(el("tr", {}, el("th", {}, "Время"), el("th", {}, "Вероятность")));
-  for (const r of resp.results)
+  for (const r of shown)
     table.append(el("tr", {}, el("td", { class: "num" }, String(r.time)), el("td", { class: "num" }, fmtP(r.top_probability))));
   out.append(table);
+  if (view.curve) renderCurve(out, resp, view);
   // Значимость и диаграммы — сразу под вероятностью: под списком из сотен
   // наборов их было бы не найти.
   const imp = renderImportance(resp); if (imp) out.append(imp);
@@ -1673,6 +1717,35 @@ function renderResponse(resp, kind) {
   out.append(el("div", { class: "meta" },
     `события: ${s.events} · узлы формулы: ${s.formula_nodes} · модули: ${s.modules} · узлы BDD: ${s.bdd_nodes}` +
     (s.noncoherent ? " · немонотонная схема" : "")));
+}
+
+// Кривая P(t) — общий линейный график (drawChart) по всем точкам ответа;
+// кружки — моменты из запроса. Ось значений — от нуля до «круглого» числа над
+// максимумом: вероятность отказа порядка 1e-3 на оси 0…1 слиплась бы с нулём.
+const CURVE = { pts: [], geom: null };
+function renderCurve(out, resp, view) {
+  const sfc = view.kind === "sfc";
+  const box = foldSection("curve", "cra.curve",
+    sfc ? "Вероятность выполнения критерия P(t)" : "Вероятность отказа P(t)");
+  const pts = resp.results.map((r) => ({ t: r.time, v: r.top_probability })).sort((a, b) => a.t - b.t);
+  const xmax = pts[pts.length - 1].t;
+  box.append(el("div", { class: "meta" },
+    `${pts.length} точек от 0 до t = ${fmtNum(xmax)}; кружки — моменты из поля «t», они же в таблице выше.`));
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("class", "curve-svg");
+  box.append(svg);
+  out.append(box);
+  const ymax = niceMax(Math.max(...pts.map((p) => p.v)));
+  const opts = { ymax, name: "P", marks: view.curve.map(Number) };
+  // Рисуем, когда у svg есть размер: раздел может быть свёрнут, панель —
+  // скрыта. Наблюдатель заодно перерисует график при изменении ширины окна.
+  const ro = new ResizeObserver(() => {
+    if (!svg.isConnected) { ro.disconnect(); return; }
+    if (svg.getBoundingClientRect().width >= 10) drawChart(svg, CURVE, pts, xmax, opts);
+  });
+  ro.observe(svg);
+  svg.addEventListener("mousemove", (e) => chartHover(e, svg, CURVE));
+  svg.addEventListener("mouseleave", () => chartHoverClear(svg));
 }
 
 // Сворачиваемый раздел результатов; раскрыт ли он, помнит браузер (ключ key).
