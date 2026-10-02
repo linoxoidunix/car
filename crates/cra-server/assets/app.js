@@ -1769,7 +1769,9 @@ function ordersLine(report, share) {
 // (у пути — «исправны ровно элементы пути»), и подсвечиваются узлы в том же
 // состоянии, что и набор: у сечения — в отказе, у пути — работающие.
 // Вычисляется заново при каждой отрисовке: правка схемы сразу видна.
-let hl = null;   // { which: "cut" | "path", no, events } или null
+// Щелчок по строке таблицы значимости (which = "elem") — то же для одного
+// элемента: докуда доходит его отказ в одиночку.
+let hl = null;   // { which: "cut" | "path" | "elem", no, events } или null
 
 // Узлы схемы в отказе, когда отказали ровно элементы failed. Логика — та же,
 // что у движка (io.rs): дерево — вентили над событиями; СФЦ — узел работает,
@@ -1838,18 +1840,22 @@ function renderHlBanner(st) {
   b.hidden = !st;
   if (!st) return;
   b.className = "hl-banner " + hl.which;
-  const sfc = graph.kind === "sfc", cut = hl.which === "cut";
+  const sfc = graph.kind === "sfc", cut = hl.which !== "path";
   const on = hl.events.filter((id) => nodeById(id)), off = hl.events.filter((id) => !nodeById(id));
   const chips = el("span", { class: "chips" });
   for (const id of on) chips.append(el("span", {}, id));
   const one = hl.events.length === 1;
   let msg;
-  if (st.top && cut) msg = (one ? "его отказ " : "их совместный отказ ") + (sfc ? "нарушает критерий" : "приводит к отказу системы");
+  if (hl.which === "elem") {
+    msg = st.top ? "его отказ в одиночку " + (sfc ? "нарушает критерий" : "приводит к отказу системы")
+      : "в одиночку его отказ " + (sfc ? "критерий не нарушает" : "до вершины не доходит") + "; подсвечено, докуда доходит";
+  } else if (st.top && cut) msg = (one ? "его отказ " : "их совместный отказ ") + (sfc ? "нарушает критерий" : "приводит к отказу системы");
   else if (st.top) msg = sfc ? (one ? "его" : "их") + " работоспособности достаточно для выполнения критерия"
     : (one ? "пока он исправен" : "пока они исправны") + ", система не откажет";
   else msg = (cut ? "до вершины отказ не доходит" : (one ? "его" : "их") + " исправности не хватает") +
     " — схема изменилась после расчёта или немонотонна";
-  const text = el("span", {}, el("b", {}, (cut ? "Сечение" : "Путь") + " №" + hl.no + ": "), chips, " — " + msg + ".");
+  const head = hl.which === "elem" ? "Элемент " : (cut ? "Сечение" : "Путь") + " №" + hl.no + ": ";
+  const text = el("span", {}, el("b", {}, head), chips, " — " + msg + ".");
   if (off.length) text.append(el("span", { class: "warn" }, " Нет на схеме: " + off.join(", ") + "."));
   const close = el("button", { type: "button", class: "secondary", title: "Снять подсветку (Esc)" }, "✕");
   close.onclick = clearHl;
@@ -1874,7 +1880,8 @@ function clearHl() {
 function markHlRows() {
   for (const tr of document.querySelectorAll("#results tr.on[data-no]")) tr.classList.remove("on");
   if (!hl) return;
-  for (const tr of document.querySelectorAll(`#results .sets.${hl.which} tr[data-no]`)) {
+  const table = hl.which === "elem" ? ".imp-table" : `.sets.${hl.which}`;
+  for (const tr of document.querySelectorAll(`#results ${table} tr[data-no]`)) {
     if (tr.dataset.no === String(hl.no)) tr.classList.add("on");
   }
 }
@@ -2006,7 +2013,8 @@ function renderImportance(resp) {
     `Q = ${fmtP(rep.failure_probability)} — вероятность отказа системы при t = ${fmtNum(resp.results[0].time)}, ` +
     "q — вероятность отказа элемента. Бирнбаум — чувствительность Q к q; FV — доля риска, " +
     "связанная с элементом; RAW — во сколько раз вырастет Q, если элемент отказал; RRW — во " +
-    "сколько раз Q упадёт, если элемент безотказен. Щелчок по заголовку столбца — сортировка."));
+    "сколько раз Q упадёт, если элемент безотказен. Щелчок по заголовку столбца — сортировка, " +
+    "по строке — показать элемент на схеме."));
   box.append(el("table", { class: "imp-table" }));
   renderImpTable(box);
   return box;
@@ -2033,14 +2041,17 @@ function renderImpTable(box) {
   for (const e of rows.slice(0, IMP_ROWS)) {
     const fv = el("td", { class: "num bar" }, fmtShare(e.criticality));
     fv.style.setProperty("--w", Math.max(0, Math.min(1, e.criticality || 0)) * 100 + "%");
-    t.append(el("tr", {},
+    const tr = el("tr", { "data-no": e.event, title: "Показать на схеме" },
       el("td", {}, e.event), el("td", { class: "num" }, fmtP(e.q)), el("td", { class: "num" }, fmtP(e.birnbaum)),
-      fv, el("td", { class: "num" }, fmtRatio(e.raw, rep)), el("td", { class: "num" }, fmtRatio(e.rrw, rep))));
+      fv, el("td", { class: "num" }, fmtRatio(e.raw, rep)), el("td", { class: "num" }, fmtRatio(e.rrw, rep)));
+    tr.onclick = () => { if (!String(getSelection())) pickSet("elem", e.event, [e.event]); };
+    t.append(tr);
   }
   if (rows.length > IMP_ROWS) {
     t.append(el("tr", {}, el("td", { colspan: IMP_COLS.length, class: "meta" },
       `показаны первые ${IMP_ROWS} из ${rows.length}`)));
   }
+  markHlRows();   // сортировка строит строки заново
 }
 // Доля риска в процентах: 62.43 %, 0.05 %, 3.1e-4 %.
 function fmtShare(x) {

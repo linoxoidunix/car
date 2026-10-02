@@ -359,10 +359,10 @@ td.bar { background-image: linear-gradient(to right, var(--bar) var(--w), transp
 .sets .orders { margin-top: 2px; }
 .spof { margin: 6px 0 2px; font-size: 12px; }
 .spof.ok { color: var(--ok); }
-.sets-table tr[data-no] { cursor: pointer; }
-.sets-table tr[data-no]:hover td { background-color: var(--bg); }
-.sets.cut tr.on td { background-color: var(--hl-cut-bg); }
-.sets.cut tr.on td:first-child { box-shadow: inset 3px 0 0 var(--hl-cut); }
+.sets-table tr[data-no], .imp-table tr[data-no] { cursor: pointer; }
+.sets-table tr[data-no]:hover td, .imp-table tr[data-no]:hover td { background-color: var(--bg); }
+.sets.cut tr.on td, .imp-table tr.on td { background-color: var(--hl-cut-bg); }
+.sets.cut tr.on td:first-child, .imp-table tr.on td:first-child { box-shadow: inset 3px 0 0 var(--hl-cut); }
 /* у путей — то же с --hl-path */
 ```
 
@@ -377,8 +377,10 @@ td.bar { background-image: linear-gradient(to right, var(--bar) var(--w), transp
 отказ любого одного элемента. Строка распределения по порядкам (`.orders`)
 прижата к строке над ней: обе — пояснения к одной таблице.
 
-Строка таблицы — кнопка «показать на схеме». Показанная строка окрашена так
-же, как подсветка на холсте, с цветной полосой слева. Полоска доли (`td.bar`)
+Строка таблицы — кнопка «показать на схеме», и у сечений с путями, и в
+таблице значимости. Показанная строка окрашена так же, как подсветка на
+холсте, с цветной полосой слева; элемент из таблицы значимости показывается
+своим отказом — цветом сечения. Полоска доли (`td.bar`)
 задана через `background-image`, а не `background`: тогда фон наведения и
 показанной строки (`background-color`) ложится под полоску, а не стирает её.
 
