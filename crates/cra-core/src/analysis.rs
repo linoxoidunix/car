@@ -11,8 +11,8 @@ use std::rc::Rc;
 
 use crate::bdd::Bdd;
 use crate::io::{
-    BddModuleReport, BddNodeReport, BddReport, BddVarReport, Options, Request, Response, SetReport,
-    SetsReport, Stats, TimeResult,
+    BddModuleReport, BddNodeReport, BddReport, BddVarReport, EventImportance, ImportanceReport,
+    Options, Request, Response, SetReport, SetsReport, Stats, TimeResult,
 };
 use crate::model::{EventId, Formula, ModelKind, Node, NodeId, System};
 use crate::module::find_modules;
@@ -249,6 +249,83 @@ fn bdd_report(c: &Compiled, sys: &System, p_event: &[f64], limit: usize) -> BddR
         modules: modules.into_iter().map(|m| m.expect("every module reported")).collect(),
         truncated,
     }
+}
+
+// --- меры значимости (options.importance) -----------------------------------
+
+/// ∂P(вершины)/∂p(события) для всех событий — мера Бирнбаума.
+///
+/// В каждом модуле `Bdd::derivatives` даёт производные его вероятности по всем
+/// его переменным за два прохода. Вложенный модуль — переменная родителя,
+/// поэтому производные сцепляются по цепному правилу:
+///   ∂P_top/∂p_e = ∂P_top/∂P_m · ∂P_m/∂p_e,
+/// где m — модуль, в BDD которого событие стоит переменной. Модуль входит
+/// переменной ровно в одного родителя (иначе он не был бы модулем), а событие —
+/// ровно в один модуль, так что сумма ниже складывает по одному слагаемому.
+/// Модули идём от вершины (с конца списка): родитель обработан раньше детей.
+fn birnbaum(c: &Compiled, nevents: usize, p_event: &[f64]) -> Vec<f64> {
+    let mod_p = module_probs(c, p_event);
+    let mut d_mod = vec![0.0f64; c.mods.len()]; // ∂P_top / ∂P_модуля
+    d_mod[c.top] = 1.0;
+    let mut out = vec![0.0f64; nevents];
+    for i in (0..c.mods.len()).rev() {
+        if d_mod[i] == 0.0 {
+            continue; // модуль на вершину не влияет — и всё под ним тоже
+        }
+        let m = &c.mods[i];
+        let d = m.bdd.derivatives(m.bdd_root, &var_probs(m, p_event, &mod_p));
+        for (v, dv) in m.vars.iter().zip(d) {
+            match v {
+                LocalVar::Event(e) => out[*e] += d_mod[i] * dv,
+                LocalVar::Module(j) => d_mod[*j] += d_mod[i] * dv,
+            }
+        }
+    }
+    out
+}
+
+/// Меры значимости — все из меры Бирнбаума, в терминах отказа.
+///
+/// Вероятность полилинейна, поэтому по I_B восстанавливаются Q при «элемент
+/// отказал наверняка» и «элемент абсолютно надёжен»:
+///   Q(q = 1) = Q + (1 − q)·I_B,   Q(q = 0) = Q − q·I_B.
+/// Отсюда критичность q·I_B/Q (она же Фусселл–Везели в форме «снижения риска»,
+/// принятой в ВАБ), RAW = Q(q = 1)/Q и RRW = Q/Q(q = 0).
+///
+/// В СФЦ вершина — критерий (успех), переменная — «элемент работает», и
+/// производная ∂P/∂p совпадает с ∂Q/∂q (оба знака меняются). Меняются только
+/// Q = 1 − P и q = 1 − p.
+fn importance_report(c: &Compiled, sys: &System, p_event: &[f64], p_top: f64) -> ImportanceReport {
+    let ib = birnbaum(c, sys.events.len(), p_event);
+    let fail = |p: f64| match sys.kind {
+        ModelKind::FaultTree => p,
+        ModelKind::Sfc => 1.0 - p,
+    };
+    let q_sys = fail(p_top);
+    let mut events: Vec<EventImportance> = sys
+        .events
+        .iter()
+        .enumerate()
+        .map(|(e, ev)| {
+            let q = fail(p_event[e]);
+            let b = ib[e];
+            let defined = q_sys > 0.0;
+            // Q(q = 0) ниже ничтожной доли Q — это ноль, испорченный округлением:
+            // элемент в одиночку отказывает систему, RRW бесконечен.
+            let q_down = q_sys - q * b;
+            EventImportance {
+                event: ev.name.clone(),
+                q,
+                birnbaum: b,
+                criticality: defined.then(|| q * b / q_sys),
+                raw: defined.then(|| (q_sys + (1.0 - q) * b) / q_sys),
+                rrw: (defined && q_down > q_sys * 1e-12).then(|| q_sys / q_down),
+            }
+        })
+        .collect();
+    let key = |x: &EventImportance| (x.criticality.unwrap_or(0.0), x.birnbaum);
+    events.sort_by(|a, b| key(b).partial_cmp(&key(a)).unwrap_or(std::cmp::Ordering::Equal));
+    ImportanceReport { failure_probability: q_sys, events }
 }
 
 /// Вероятность ветки: листья FALSE/TRUE или уже посчитанный узел (id >= 2).
@@ -493,6 +570,9 @@ pub fn analyze_system(sys: &System, req: &Request) -> Result<Response, String> {
 
     // ROBDD тех же модулей, что дали top_probability; вероятности — для t[0].
     let bdd = opts.bdd.then(|| bdd_report(&compiled, sys, p0, opts.bdd_max_nodes));
+    let importance = opts
+        .importance
+        .then(|| importance_report(&compiled, sys, p0, results[0].top_probability));
     if bdd.as_ref().is_some_and(|b| b.truncated) {
         warnings.push(format!(
             "ROBDD exceeds bdd_max_nodes = {}: some modules are returned without nodes",
@@ -509,6 +589,7 @@ pub fn analyze_system(sys: &System, req: &Request) -> Result<Response, String> {
         cut_sets,
         path_sets,
         bdd,
+        importance,
         stats: Stats {
             events: sys.events.len(),
             formula_nodes: sys.formula.nodes.len(),

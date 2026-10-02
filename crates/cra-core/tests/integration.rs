@@ -520,3 +520,157 @@ fn bdd_export_respects_node_limit() {
     assert_eq!((m1.size, m1.nodes.len()), (2, 0));
     assert!(r.warnings.iter().any(|w| w.contains("bdd_max_nodes")));
 }
+
+// --- меры значимости (options.importance) -----------------------------------
+
+fn imp<'a>(r: &'a cra::Response, name: &str) -> &'a cra::io::EventImportance {
+    let rep = r.importance.as_ref().expect("importance requested");
+    rep.events.iter().find(|e| e.event == name).expect("event reported")
+}
+
+/// (a&b)|(b&c), q = 0.1: Q = 0.019. By hand: Q|a=1 = q_b = 0.1, Q|a=0 = q_b·q_c
+/// = 0.01, so I_B(a) = 0.09; Q|b=1 = 1 − 0.9² = 0.19, Q|b=0 = 0, so I_B(b) =
+/// 0.19 — and b alone, failed, does not fail the system, but b alone
+/// working saves it: RRW(b) is infinite.
+#[test]
+fn importance_by_hand() {
+    let json = r#"{
+      "model": {
+        "type": "fault_tree",
+        "top": "top",
+        "events": [
+          {"id": "a", "dist": {"type": "fixed", "q": 0.1}},
+          {"id": "b", "dist": {"type": "fixed", "q": 0.1}},
+          {"id": "c", "dist": {"type": "fixed", "q": 0.1}}
+        ],
+        "gates": [
+          {"id": "g1", "op": "and", "inputs": ["a", "b"]},
+          {"id": "g2", "op": "and", "inputs": ["b", "c"]},
+          {"id": "top", "op": "or", "inputs": ["g1", "g2"]}
+        ]
+      },
+      "options": {"importance": true}
+    }"#;
+    let r = run(json);
+    let q = 0.019;
+    assert!((r.importance.as_ref().unwrap().failure_probability - q).abs() < 1e-15);
+    let a = imp(&r, "a");
+    assert!((a.birnbaum - 0.09).abs() < 1e-15);
+    assert!((a.criticality.unwrap() - 0.009 / q).abs() < 1e-12);
+    assert!((a.raw.unwrap() - 0.1 / q).abs() < 1e-12);
+    assert!((a.rrw.unwrap() - q / 0.01).abs() < 1e-12);
+    let b = imp(&r, "b");
+    assert!((b.birnbaum - 0.19).abs() < 1e-15);
+    assert!((b.criticality.unwrap() - 1.0).abs() < 1e-12);
+    assert!((b.raw.unwrap() - 0.19 / q).abs() < 1e-12);
+    assert!(b.rrw.is_none(), "Q(q_b = 0) = 0: RRW is infinite");
+    // Most critical first.
+    assert_eq!(r.importance.as_ref().unwrap().events[0].event, "b");
+    // Default: no importance in the response.
+    let plain = run(&json.replace(r#""options": {"importance": true}"#, r#""options": {}"#));
+    assert!(plain.importance.is_none());
+}
+
+/// Through nested modules the chain rule must hold: top = m1 | c, m1 = a & b.
+/// I_B(a) = (1 − q_c)·q_b = 0.27, I_B(c) = 1 − q_a·q_b = 0.94.
+#[test]
+fn importance_through_modules() {
+    let json = r#"{
+      "model": {
+        "type": "fault_tree",
+        "top": "top",
+        "events": [
+          {"id": "a", "dist": {"type": "fixed", "q": 0.2}},
+          {"id": "b", "dist": {"type": "fixed", "q": 0.3}},
+          {"id": "c", "dist": {"type": "fixed", "q": 0.1}},
+          {"id": "spare", "dist": {"type": "fixed", "q": 0.5}}
+        ],
+        "gates": [
+          {"id": "m1", "op": "and", "inputs": ["a", "b"]},
+          {"id": "top", "op": "or", "inputs": ["m1", "c"]}
+        ]
+      },
+      "options": {"importance": true}
+    }"#;
+    let r = run(json);
+    assert!(r.stats.modules >= 2);
+    assert!((imp(&r, "a").birnbaum - 0.27).abs() < 1e-15);
+    assert!((imp(&r, "b").birnbaum - 0.18).abs() < 1e-15);
+    assert!((imp(&r, "c").birnbaum - 0.94).abs() < 1e-15);
+    // An event outside the scheme does not matter at all.
+    let s = imp(&r, "spare");
+    assert_eq!(s.birnbaum, 0.0);
+    assert_eq!((s.criticality, s.raw, s.rrw), (Some(0.0), Some(1.0), Some(1.0)));
+}
+
+/// Birnbaum = dQ/dq_e, checked against central differences through the whole
+/// pipeline (Q is multilinear, so the quotient is exact up to rounding).
+#[test]
+fn importance_matches_finite_differences() {
+    let model = |q: [f64; 5]| {
+        format!(
+            r#"{{
+          "model": {{
+            "type": "fault_tree", "top": "top",
+            "events": [
+              {{"id": "e1", "dist": {{"type": "fixed", "q": {}}}}},
+              {{"id": "e2", "dist": {{"type": "fixed", "q": {}}}}},
+              {{"id": "e3", "dist": {{"type": "fixed", "q": {}}}}},
+              {{"id": "e4", "dist": {{"type": "fixed", "q": {}}}}},
+              {{"id": "e5", "dist": {{"type": "fixed", "q": {}}}}}
+            ],
+            "gates": [
+              {{"id": "c1", "op": "and", "inputs": ["e1", "e2"]}},
+              {{"id": "c2", "op": "and", "inputs": ["e4", "e5"]}},
+              {{"id": "c3", "op": "and", "inputs": ["e1", "e3", "e5"]}},
+              {{"id": "c4", "op": "and", "inputs": ["e2", "e3", "e4"]}},
+              {{"id": "k", "op": "atleast", "k": 2, "inputs": ["c1", "c2", "c3", "c4"]}},
+              {{"id": "top", "op": "or", "inputs": ["k", "c3"]}}
+            ]
+          }},
+          "options": {{"importance": true}}
+        }}"#,
+            q[0], q[1], q[2], q[3], q[4]
+        )
+    };
+    let q = [0.1, 0.2, 0.3, 0.4, 0.5];
+    let r = run(&model(q));
+    for i in 0..5 {
+        let (mut up, mut dn) = (q, q);
+        up[i] += 1e-4;
+        dn[i] -= 1e-4;
+        let fd = (run(&model(up)).results[0].top_probability
+            - run(&model(dn)).results[0].top_probability)
+            / 2e-4;
+        let b = imp(&r, &format!("e{}", i + 1)).birnbaum;
+        assert!((b - fd).abs() < 1e-9, "e{}: {b} vs {fd}", i + 1);
+    }
+}
+
+/// СФЦ: measures are in failure terms. n3 & (n1 | n2), q = 0.1: R = 0.891,
+/// Q = 0.109; I_B(n3) = dR/dp3 = 0.99, I_B(n1) = p3·q2 = 0.09.
+#[test]
+fn importance_sfc_in_failure_terms() {
+    let json = r#"{
+      "model": {
+        "type": "sfc",
+        "nodes": [
+          {"id": "n1", "dist": {"type": "fixed", "q": 0.1}},
+          {"id": "n2", "dist": {"type": "fixed", "q": 0.1}},
+          {"id": "n3", "dist": {"type": "fixed", "q": 0.1},
+           "inputs": [{"from": "n1"}, {"from": "n2"}]}
+        ],
+        "criterion": {"target": "n3"}
+      },
+      "options": {"importance": true}
+    }"#;
+    let r = run(json);
+    let rep = r.importance.as_ref().unwrap();
+    assert!((rep.failure_probability - 0.109).abs() < 1e-15);
+    let n3 = imp(&r, "n3");
+    assert!((n3.q - 0.1).abs() < 1e-15, "q is the failure probability, not 1 − q");
+    assert!((n3.birnbaum - 0.99).abs() < 1e-15);
+    assert!((n3.raw.unwrap() - 1.0 / 0.109).abs() < 1e-12, "n3 failed => system failed");
+    assert!((imp(&r, "n1").birnbaum - 0.09).abs() < 1e-15);
+    assert_eq!(rep.events[0].event, "n3");
+}

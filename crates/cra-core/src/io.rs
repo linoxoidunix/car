@@ -244,6 +244,9 @@ pub struct Options {
     /// Maximum ROBDD nodes returned, summed over modules; a module that does
     /// not fit comes without its nodes.
     pub bdd_max_nodes: usize,
+    /// Importance measures of every basic event (Birnbaum, criticality /
+    /// Fussell-Vesely, RAW, RRW).
+    pub importance: bool,
 }
 
 impl Default for Options {
@@ -256,6 +259,7 @@ impl Default for Options {
             cutoff: 0.0,
             bdd: false,
             bdd_max_nodes: 2_000,
+            importance: false,
         }
     }
 }
@@ -278,6 +282,9 @@ pub struct Response {
     /// Only with `options.bdd`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bdd: Option<BddReport>,
+    /// Only with `options.importance`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub importance: Option<ImportanceReport>,
     pub stats: Stats,
     pub warnings: Vec<String>,
 }
@@ -305,6 +312,34 @@ pub struct SetReport {
     pub order: usize,
     /// Probability of the set at the first evaluation time.
     pub probability: f64,
+}
+
+/// Меры значимости базовых событий. Все — в терминах ОТКАЗА в обеих нотациях:
+/// Q — вероятность отказа системы (дерево: вершина; СФЦ: 1 − P(критерий)),
+/// q — вероятность отказа элемента. Значения — для первого момента времени.
+#[derive(Debug, Serialize)]
+pub struct ImportanceReport {
+    /// Q at the first evaluation time.
+    pub failure_probability: f64,
+    /// Every basic event, most critical first.
+    pub events: Vec<EventImportance>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct EventImportance {
+    pub event: String,
+    /// Failure probability of the element, q.
+    pub q: f64,
+    /// Birnbaum: dQ/dq = Q(q = 1) − Q(q = 0).
+    pub birnbaum: f64,
+    /// Criticality = Fussell-Vesely in its risk-decrease form:
+    /// q·Birnbaum / Q = (Q − Q(q = 0)) / Q. None when Q = 0.
+    pub criticality: Option<f64>,
+    /// Risk achievement worth Q(q = 1) / Q. None when Q = 0.
+    pub raw: Option<f64>,
+    /// Risk reduction worth Q / Q(q = 0). None when Q = 0, or when Q(q = 0) = 0
+    /// (the element alone fails the system: RRW is infinite).
+    pub rrw: Option<f64>,
 }
 
 /// ROBDD модулей — ровно те диаграммы, по которым считалась вероятность.
