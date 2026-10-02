@@ -281,6 +281,51 @@ impl Bdd {
         r
     }
 
+    /// Производные вероятности функции по вероятностям всех переменных сразу:
+    /// `d[v] = ∂P/∂p_v` (мера Бирнбаума, если функция — отказ системы).
+    ///
+    /// P полилинейна по p, поэтому ∂P/∂p_v = P(f | v = 1) − P(f | v = 0). Считать
+    /// так «в лоб» — два прохода по BDD на каждую переменную. Здесь хватает двух
+    /// проходов на все: снизу вверх — вероятность подфункции каждого узла P(u),
+    /// сверху вниз — вероятность R(u) дойти до узла от корня. Путь в
+    /// упорядоченной BDD проверяет переменную не больше одного раза, и R(u) от
+    /// p_v узла u не зависит, поэтому
+    ///   ∂P/∂p_v = Σ по узлам u с переменной v:  R(u) · (P(hi) − P(lo)).
+    /// Переменная, которой нет в функции (поглощена), получает 0.
+    pub fn derivatives(&self, root: u32, p: &[f64]) -> Vec<f64> {
+        let mut d = vec![0.0f64; p.len()];
+        let (_, nodes) = self.export(root);
+        // Узлы в списке export: корень первый, дети после родителей, id = индекс + 2.
+        let at = |u: u32, v: &[f64]| match u {
+            FALSE => 0.0,
+            TRUE => 1.0,
+            _ => v[u as usize - 2],
+        };
+        let n = nodes.len();
+        let mut pn = vec![0.0f64; n];
+        for k in (0..n).rev() {
+            let x = nodes[k];
+            let pv = p[x.var as usize];
+            pn[k] = pv * at(x.hi, &pn) + (1.0 - pv) * at(x.lo, &pn);
+        }
+        let mut reach = vec![0.0f64; n];
+        if n > 0 {
+            reach[0] = 1.0;
+        }
+        for k in 0..n {
+            let x = nodes[k];
+            let pv = p[x.var as usize];
+            d[x.var as usize] += reach[k] * (at(x.hi, &pn) - at(x.lo, &pn));
+            if x.hi > TRUE {
+                reach[x.hi as usize - 2] += reach[k] * pv;
+            }
+            if x.lo > TRUE {
+                reach[x.lo as usize - 2] += reach[k] * (1.0 - pv);
+            }
+        }
+        d
+    }
+
     /// Минимальные наборы (minsol, алгоритм Рози). Это наименьшие наборы
     /// переменных, при истинности которых функция истинна. Для функции отказа
     /// это и есть минимальные сечения (МНС). Каждый набор идёт с его
@@ -476,6 +521,36 @@ mod tests {
         }
         let levels: Vec<u32> = nodes.iter().map(|n| n.var).collect();
         assert_eq!(levels, vec![0, 1, 1, 2]);
+    }
+
+    #[test]
+    fn derivatives_are_exact() {
+        // AND: dP/dp0 = p1, dP/dp1 = p0.
+        let mut b = Bdd::new();
+        let x = b.var(0);
+        let y = b.var(1);
+        let f = b.and(x, y);
+        let d = b.derivatives(f, &[0.3, 0.4]);
+        assert!((d[0] - 0.4).abs() < 1e-15 && (d[1] - 0.3).abs() < 1e-15, "{d:?}");
+
+        // 2-of-3 and a non-coherent XOR term, against central differences: P is
+        // multilinear, so the difference quotient is exact up to rounding.
+        let mut b = Bdd::new();
+        let xs = [b.var(0), b.var(1), b.var(2), b.var(3)];
+        let maj = b.atleast(2, &xs[..3]);
+        let f = b.xor(maj, xs[3]);
+        let p = [0.1, 0.25, 0.6, 0.35, 0.9]; // level 4 is absent from f
+        let d = b.derivatives(f, &p);
+        for v in 0..p.len() {
+            let (mut up, mut dn) = (p, p);
+            up[v] += 1e-4;
+            dn[v] -= 1e-4;
+            let fd = (b.prob(f, &up) - b.prob(f, &dn)) / 2e-4;
+            assert!((d[v] - fd).abs() < 1e-9, "v = {v}: {} vs {fd}", d[v]);
+        }
+        assert_eq!(d[4], 0.0);
+        // Constant functions do not depend on anything.
+        assert_eq!(b.derivatives(TRUE, &p), vec![0.0; 5]);
     }
 
     #[test]
