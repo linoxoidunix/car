@@ -106,6 +106,15 @@ function normalizeMarkovDist(d) {
     delete tr.rate;
   }
 }
+// Марковские узлы приводятся к полной форме (у переходов `dist`, у состояний
+// координаты) сразу, как схема попала в редактор. Инспектор делает то же
+// самое, но тогда простой выбор узла менял бы схему и становился шагом
+// истории правок, который нечем отменить.
+function normalizeGraph(g) {
+  for (const n of g.nodes) {
+    if (n.dist && n.dist.type === "markov") { normalizeMarkovDist(n.dist); mkEnsurePos(n.dist); }
+  }
+}
 
 const OP_LABEL = { and: "И  &", or: "ИЛИ  ≥1", not: "НЕ", xor: "XOR  =1",
   atleast: "K из N", nand: "И-НЕ", nor: "ИЛИ-НЕ" };
@@ -131,12 +140,14 @@ const PALETTE = {
 // Хранение (localStorage): не потерять схему
 // ===========================================================================
 function save() {
-  try { localStorage.setItem("cra.graph", JSON.stringify(graph)); } catch (e) {}
+  const s = JSON.stringify(graph);
+  try { localStorage.setItem("cra.graph", s); } catch (e) {}
+  record(s);
 }
 function load() {
   try {
     const s = localStorage.getItem("cra.graph");
-    if (s) { graph = JSON.parse(s); seq = graph.nodes.reduce((m, n) => Math.max(m, idNum(n.id)), 0); }
+    if (s) { graph = JSON.parse(s); normalizeGraph(graph); seq = graph.nodes.reduce((m, n) => Math.max(m, idNum(n.id)), 0); }
   } catch (e) {}
 }
 function idNum(id) { const m = /(\d+)$/.exec(id); return m ? +m[1] : 0; }
@@ -152,6 +163,53 @@ function setArcStyle(patch) {
   Object.assign(arcStyle, patch);
   try { localStorage.setItem("cra.arc", JSON.stringify(arcStyle)); } catch (e) {}
   renderArcTool();
+}
+
+// ===========================================================================
+// История правок: отменить (Ctrl+Z) и повторить (Ctrl+Y)
+// ===========================================================================
+// Шаг истории — снимок всей схемы, та же JSON-строка, которую save() кладёт в
+// localStorage после каждой правки. Если строка изменилась, прежняя уходит в
+// стек отмены. Выделение, сдвиг и масштаб холста в схему не входят, поэтому
+// шагов не создают.
+const HISTORY_LIMIT = 100;
+const hist = { undo: [], redo: [], cur: null };
+
+function record(s) {
+  if (s === hist.cur || historyHeld()) return;
+  if (hist.cur !== null) {
+    hist.undo.push(hist.cur);
+    if (hist.undo.length > HISTORY_LIMIT) hist.undo.shift();
+  }
+  hist.redo.length = 0;   // новая правка обрывает ветку отменённого
+  hist.cur = s;
+  renderHistory();
+}
+// Пока узел тащат или открыто окно марковской диаграммы, промежуточные
+// состояния не записываются: всё перетаскивание и все правки в окне — один
+// шаг, он запишется, когда кнопку мыши отпустят или окно закроют.
+function historyHeld() {
+  return (drag && drag.mode === "node") || !$("mk-modal").classList.contains("hidden");
+}
+function undo() { step(hist.undo, hist.redo, "правка отменена"); }
+function redo() { step(hist.redo, hist.undo, "правка повторена"); }
+// Перейти к соседнему снимку; текущий уходит в противоположный стек.
+function step(from, to, msg) {
+  if (!from.length || historyHeld()) return;
+  to.push(hist.cur);
+  hist.cur = from.pop();
+  graph = JSON.parse(hist.cur);
+  seq = graph.nodes.reduce((m, n) => Math.max(m, idNum(n.id)), 0);
+  // Выделение остаётся, если выделенное есть и в восстановленной схеме.
+  if (selected && !nodeById(selected)) selected = null;
+  if (selEdge && !edgeByPair(selEdge.parent, selEdge.child)) selEdge = null;
+  $("kind").value = graph.kind;   // шаг мог отменить смену типа модели
+  buildPalette(); renderInspector(); render(); renderHistory();
+  setStatus(msg, "ok");   // прежнее сообщение могло относиться к отменённому
+}
+function renderHistory() {
+  $("undo").disabled = !hist.undo.length;
+  $("redo").disabled = !hist.redo.length;
 }
 
 // ===========================================================================
@@ -404,7 +462,7 @@ canvas.addEventListener("mousedown", (ev) => {
     const id = nodeG.dataset.id;
     const n = nodeById(id);
     const w = screenToWorld(ev.clientX, ev.clientY);
-    drag = { mode: "node", id, dx: w.x - n.x, dy: w.y - n.y, moved: false };
+    drag = { mode: "node", id, dx: w.x - n.x, dy: w.y - n.y, sx: ev.clientX, sy: ev.clientY, moved: false };
     nodeG.classList.add("dragging");
     ev.preventDefault();
     return;
@@ -429,6 +487,9 @@ window.addEventListener("mousemove", (ev) => {
     if (Math.abs(ev.clientX - drag.sx) + Math.abs(ev.clientY - drag.sy) > 3) drag.moved = true;
     render();
   } else if (drag.mode === "node") {
+    // Тот же порог в 3 px, что у панорамы: дрогнувшая рука не превращает клик
+    // по узлу в перемещение (и в шаг истории).
+    if (!drag.moved && Math.abs(ev.clientX - drag.sx) + Math.abs(ev.clientY - drag.sy) <= 3) return;
     const w = screenToWorld(ev.clientX, ev.clientY);
     const n = nodeById(drag.id);
     n.x = w.x - drag.dx; n.y = w.y - drag.dy; drag.moved = true;
@@ -450,20 +511,23 @@ window.addEventListener("mousemove", (ev) => {
 
 window.addEventListener("mouseup", (ev) => {
   if (!drag) return;
-  if (drag.mode === "connect") {
+  // Жест закончен до render(): пока drag в режиме "node", история стоит
+  // (historyHeld), а этот render() как раз должен записать перемещение.
+  const d = drag;
+  drag = null;
+  if (d.mode === "connect") {
     $("temp-layer").textContent = "";
     const nodeG = ev.target.closest && ev.target.closest(".node");
     // Dragging from X's port and dropping on Y means "Y takes X as an input",
     // i.e. Y is the consumer (parent) and X is the source (child).
-    if (nodeG) addEdge(nodeG.dataset.id, drag.from);
-  } else if (drag.mode === "node") {
+    if (nodeG) addEdge(nodeG.dataset.id, d.from);
+  } else if (d.mode === "node") {
     document.querySelectorAll(".node.dragging").forEach((e) => e.classList.remove("dragging"));
-    if (!drag.moved) select(drag.id);   // click without move = select
+    if (!d.moved) select(d.id);   // click without move = select
     render();
-  } else if (drag.mode === "pan") {
-    if (!drag.moved) select(null);       // click empty = deselect
+  } else if (d.mode === "pan") {
+    if (!d.moved) select(null);   // click empty = deselect
   }
-  drag = null;
 });
 
 canvas.addEventListener("wheel", (ev) => {
@@ -1270,6 +1334,7 @@ function documentToGraph(doc) {
   // Схема «в p», если все её постоянные вероятности заданы как p.
   const fixed = g.nodes.filter((n) => n.dist && n.dist.type === "fixed");
   g.prob = fixed.length && fixed.every((n) => probKey(n.dist) === "p") ? "p" : "q";
+  normalizeGraph(g);   // состояниям без координат — раскладка по кругу
   return { g, req, warns };
 }
 
@@ -1523,9 +1588,13 @@ const ARC_KEYS = {
   Numpad1: { conj: false }, Numpad2: { conj: true }, Numpad3: { inverse: false }, Numpad4: { inverse: true },
 };
 function arcKeyAllowed(e) {
-  if (e.ctrlKey || e.metaKey || e.altKey || graph.kind !== "sfc") return false;
+  return !(e.ctrlKey || e.metaKey || e.altKey) && graph.kind === "sfc" && editorKeyAllowed(e);
+}
+// Клавиши редактора схемы: только на вкладке «Схема» при закрытом марковском
+// окне и не в поле ввода — там у тех же клавиш своя работа (цифра — это ввод,
+// Ctrl+Z отменяет набранный текст).
+function editorKeyAllowed(e) {
   if (!$("tab-diagram").classList.contains("active") || !$("mk-modal").classList.contains("hidden")) return false;
-  // Цифра, набранная в поле ввода, — это ввод, а не команда.
   return !(e.target.closest && e.target.closest("input, textarea, select, [contenteditable]"));
 }
 
@@ -1561,6 +1630,8 @@ $("kind").addEventListener("change", () => {
   graph.kind = $("kind").value; buildPalette(); render();
 });
 $("analyze").addEventListener("click", analyze);
+$("undo").addEventListener("click", undo);
+$("redo").addEventListener("click", redo);
 $("fit").addEventListener("click", fitView);
 $("clear").addEventListener("click", () => {
   if (!confirm("Очистить схему?")) return;
@@ -1625,6 +1696,8 @@ document.addEventListener("keydown", (e) => {
   // e.code — физическая клавиша: в русской раскладке e.key был бы «ы» / «щ».
   else if (mod && e.code === "KeyS") { e.preventDefault(); saveFile(); }
   else if (mod && e.code === "KeyO") { e.preventDefault(); $("file-input").click(); }
+  else if (mod && e.code === "KeyZ" && editorKeyAllowed(e)) { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
+  else if (mod && e.code === "KeyY" && editorKeyAllowed(e)) { e.preventDefault(); redo(); }
   else if (ARC_KEYS[e.code] && arcKeyAllowed(e)) setArcStyle(ARC_KEYS[e.code]);
 });
 for (const b of document.querySelectorAll("[data-arc]")) {
