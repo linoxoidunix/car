@@ -30,6 +30,8 @@
   --sel: #4d6bfe;
   --edge: #a0a6b2;
   --bar: rgba(59, 130, 246, .18);
+  --hl-cut: #4d6bfe; --hl-cut-bg: #dbeafe;    /* подсвеченное сечение: отказ */
+  --hl-path: #1d8a47; --hl-path-bg: #dcf2e4;  /* подсвеченный путь: работа */
   --scroll: #d1d5db;
   --shadow: 0 1px 2px rgba(20, 30, 60, .05), 0 6px 20px rgba(20, 30, 60, .07);
   --backdrop: rgba(20, 24, 40, .35);
@@ -49,6 +51,7 @@
     --sel: #6f9bff; --edge: #6b707a; --bar: rgba(111, 155, 255, .24); --scroll: #4a4c52;
     --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .35);
     --backdrop: rgba(0, 0, 0, .55);
+    --hl-cut: #6f9bff; --hl-cut-bg: #1f3460; --hl-path: #4cc27a; --hl-path-bg: #1d3a29;
   }
 }
 * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--scroll) transparent; }
@@ -186,6 +189,32 @@ button.pal-node { display: flex; align-items: center; gap: 6px; }
 .edge-label.disj { fill: var(--accent); }
 #arrow path { fill: var(--edge); }
 #dot circle { fill: var(--gate-br); }
+/* ---- подсветка сечения или пути (щелчок по строке в результатах) ----
+   Элементы набора — толстая рамка и заливка, узлы и дуги, куда дошло их
+   состояние, — рамка того же цвета, остальное приглушено. Сечение — цвет
+   отказа, путь — цвет работы. Выделение для правки остаётся видно поверх. */
+#canvas.hl-cut { --hl: var(--hl-cut); --hl-bg: var(--hl-cut-bg); }
+#canvas.hl-path { --hl: var(--hl-path); --hl-bg: var(--hl-path-bg); }
+.hl .node { opacity: .35; }
+.hl .node.hl-src, .hl .node.hl-via { opacity: 1; }
+.hl .node.hl-via .body { stroke: var(--hl); stroke-width: 2.5; }
+.hl .node.hl-src .body { stroke: var(--hl); stroke-width: 3.5; fill: var(--hl-bg); }
+.hl .node.selected .body { stroke: var(--sel); }
+.hl .edge, .hl .edge-label { opacity: .3; }
+.hl .edge-label.hl-via { opacity: 1; }
+.hl .edge.hl-via { opacity: 1; stroke: var(--hl); stroke-width: 3; marker-end: url(#arrow-hl); }
+.hl .edge.conj.hl-via { marker-end: url(#dot-hl); }
+#arrow-hl path, #dot-hl circle { fill: var(--hl); }
+/* Плашка — вверху холста: вершина (критерий) стоит внизу схемы, и путь к ней
+   плашка не закрывает. Элементы набора из-под неё выводит revealNodes. */
+.hl-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  max-width: calc(100% - 32px); display: flex; align-items: center; gap: 10px;
+  padding: 5px 6px 5px 12px; font-size: 12px; background: var(--panel);
+  border: 1px solid var(--border); border-left: 4px solid var(--hl-cut); border-radius: var(--radius);
+  box-shadow: var(--shadow); }
+.hl-banner.path { border-left-color: var(--hl-path); }
+.hl-banner[hidden] { display: none; }
+.hl-banner button { padding: 0 7px; flex: 0 0 auto; }
 /* Тянущаяся дуга. pointer-events: none — иначе её конец под курсором
    перехватил бы mouseup, и узел, на который её бросили, не нашёлся бы.
    В СФЦ на ней уже видно окончание, которое получит дуга (тип из «Новая дуга»). */
@@ -259,13 +288,21 @@ td.num { font-family: var(--mono); text-align: right; white-space: nowrap; }
 .imp-table th.sortable:hover, .imp-table th.on { color: var(--text); }
 .imp-table th.num { text-align: right; }
 /* Доля (FV, вклад сечения): полоска под числом читается быстрее столбца цифр. */
-td.bar { background: linear-gradient(to right, var(--bar) var(--w), transparent var(--w)); }
+td.bar { background-image: linear-gradient(to right, var(--bar) var(--w), transparent var(--w)); }
 /* ---- сечения и пути ---- */
 /* Числовые столбцы — по содержимому, остальное место — элементам набора;
    столбцу доли — ширина под полоску. */
 .sets-table th.num { text-align: right; }
 .sets-table th.num, .sets-table td.num { width: 1%; }
 .sets-table td.bar { min-width: 120px; }
+/* Строка — кнопка «показать на схеме»; показанная — цветом подсветки. Фон
+   ячейки — цвет, а полоска доли — картинка поверх него, они не мешают друг другу. */
+.sets-table tr[data-no] { cursor: pointer; }
+.sets-table tr[data-no]:hover td { background-color: var(--bg); }
+.sets.cut tr.on td { background-color: var(--hl-cut-bg); }
+.sets.path tr.on td { background-color: var(--hl-path-bg); }
+.sets.cut tr.on td:first-child { box-shadow: inset 3px 0 0 var(--hl-cut); }
+.sets.path tr.on td:first-child { box-shadow: inset 3px 0 0 var(--hl-path); }
 .sets .orders { margin-top: 2px; }
 .spof { margin: 6px 0 2px; font-size: 12px; }
 .spof.ok { color: var(--ok); }

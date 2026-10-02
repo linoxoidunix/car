@@ -273,9 +273,15 @@ function render() {
 function renderNodes() {
   const layer = $("nodes-layer");
   layer.textContent = "";
+  const st = hlState();
+  canvas.classList.toggle("hl", !!st);
+  canvas.classList.toggle("hl-cut", !!st && hl.which !== "path");
+  canvas.classList.toggle("hl-path", !!st && hl.which === "path");
+  renderHlBanner(st);
   for (const n of graph.nodes) {
     const g = document.createElementNS(SVGNS, "g");
-    g.setAttribute("class", "node " + nodeKind(n) + (selNodes.has(n.id) ? " selected" : "") + (n.top ? " top" : ""));
+    const lit = !st ? "" : st.src.has(n.id) ? " hl-src" : st.hit.has(n.id) ? " hl-via" : "";
+    g.setAttribute("class", "node " + nodeKind(n) + (selNodes.has(n.id) ? " selected" : "") + (n.top ? " top" : "") + lit);
     g.setAttribute("transform", `translate(${n.x},${n.y})`);
     g.dataset.id = n.id;
 
@@ -351,6 +357,7 @@ function text(x, y, str, cls) {
 function renderEdges() {
   const layer = $("edges-layer");
   layer.textContent = "";
+  const st = hlState();
   for (const e of graph.edges) {
     const p = nodeById(e.parent), c = nodeById(e.child);
     if (!p || !c) continue;
@@ -369,7 +376,8 @@ function renderEdges() {
     const isSel = selEdge && selEdge.parent === e.parent && selEdge.child === e.child;
     const kindCls = sfc ? (e.conj ? " conj" : " disj") : "";
     const path = document.createElementNS(SVGNS, "path");
-    path.setAttribute("class", "edge" + (e.inverse ? " inverse" : "") + kindCls + (isSel ? " selected" : ""));
+    path.setAttribute("class", "edge" + (e.inverse ? " inverse" : "") + kindCls + (isSel ? " selected" : "") +
+      (st && hlEdge(st, e) ? " hl-via" : ""));
     path.setAttribute("d", d);
     // The visible line lies on top of the hit area, so it must carry the id
     // too — otherwise a click right on the line would miss the edge.
@@ -377,7 +385,8 @@ function renderEdges() {
     layer.appendChild(path);
 
     if (sfc) {
-      const mid = text((a.x + b.x) / 2, (a.y + b.y) / 2 - 3, arcBadge(e), "edge-label" + (e.conj ? " conj" : " disj"));
+      const mid = text((a.x + b.x) / 2, (a.y + b.y) / 2 - 3, arcBadge(e), "edge-label" + (e.conj ? " conj" : " disj") +
+        (path.classList.contains("hl-via") ? " hl-via" : ""));
       mid.setAttribute("text-anchor", "middle");
       layer.appendChild(mid);
     } else if (e.inverse) {
@@ -1239,17 +1248,8 @@ function graphToRequest() {
   const errs = [];
   if (!graph.nodes.length) errs.push("схема пуста");
 
-  // Вершина (top) — узел, у которого есть входы, но сам он никуда не входит.
-  const isChild = new Set(graph.edges.map((e) => e.child));
-  const isParent = new Set(graph.edges.map((e) => e.parent));
-  const rootCandidates = graph.nodes.filter((n) => isParent.has(n.id) && !isChild.has(n.id));
-  const marked = graph.nodes.filter((n) => n.top);
-  let top = null;
-  if (marked.length === 1) top = marked[0];
-  else if (marked.length > 1) errs.push("отмечено несколько вершинных узлов");
-  else if (rootCandidates.length === 1) top = rootCandidates[0];
-  else if (graph.nodes.length === 1) top = graph.nodes[0];
-  else errs.push("не удаётся определить вершину — отметьте её галочкой в инспекторе");
+  const { top, err } = findTop();
+  if (err) errs.push(err);
 
   let model = null;
   if (graph.kind === "fault_tree") {
@@ -1294,6 +1294,19 @@ function graphToRequest() {
   const req = { model, options: Object.assign({}, graph.options || { max_order: 8 }, calcOptions()) };
   if (times.length > 1) req.times = times; else req.mission_time = times[0] || 0;
   return { req, errs };
+}
+// Вершина (top) — узел с галочкой «вершина», а без неё — единственный узел, у
+// которого есть входы, но сам он никуда не входит. err — почему не найдена.
+function findTop() {
+  const isChild = new Set(graph.edges.map((e) => e.child));
+  const isParent = new Set(graph.edges.map((e) => e.parent));
+  const rootCandidates = graph.nodes.filter((n) => isParent.has(n.id) && !isChild.has(n.id));
+  const marked = graph.nodes.filter((n) => n.top);
+  if (marked.length === 1) return { top: marked[0] };
+  if (marked.length > 1) return { top: null, err: "отмечено несколько вершинных узлов" };
+  if (rootCandidates.length === 1) return { top: rootCandidates[0] };
+  if (graph.nodes.length === 1) return { top: graph.nodes[0] };
+  return { top: null, err: "не удаётся определить вершину — отметьте её галочкой в инспекторе" };
 }
 function cleanDist(d) {
   const o = { type: d.type };
@@ -1533,6 +1546,7 @@ function applyDocument(doc) {
   jsonEdited = false;     // вкладка JSON снова показывает схему
   // Результаты относились к прежней схеме.
   $("results").innerHTML = '<p class="hint">Постройте схему и нажмите «Рассчитать».</p>';
+  hl = null;
   switchTab("diagram");   // fitView меряет холст, а скрытый холст имеет размер 0
   buildPalette(); select(null); fitView();
   return warns;
@@ -1651,7 +1665,7 @@ async function analyze() {
 // Показ результатов
 // ===========================================================================
 function fmtP(p) { if (p === 0) return "0"; return p >= 1e-3 ? p.toFixed(6) : p.toExponential(4); }
-function showError(msg) { $("results").innerHTML = ""; $("results").append(el("div", { class: "err-box" }, msg)); }
+function showError(msg) { clearHl(); $("results").innerHTML = ""; $("results").append(el("div", { class: "err-box" }, msg)); }
 
 // Наборы: сечения (which = "cut") или пути ("path"); сервер отдаёт их по
 // убыванию вероятности. P сечения — вероятность совместного отказа его
@@ -1674,7 +1688,7 @@ function renderSets(report, which, kind) {
     while (k < report.sets.length && acc < 0.9 * sum) acc += report.sets[k++].probability;
     meta += k === 1 ? " · 90 % суммы даёт сечение №1" : ` · 90 % суммы дают сечения №1–${k}`;
   }
-  box.append(el("div", { class: "meta" }, meta));
+  box.append(el("div", { class: "meta" }, meta + " · щелчок по строке — показать на схеме"));
   if (cut) { const sp = singleFailures(report, kind); if (sp) box.append(sp); }
   box.append(ordersLine(report, share));
 
@@ -1687,8 +1701,10 @@ function renderSets(report, which, kind) {
   report.sets.slice(0, SETS_ROWS).forEach((s, i) => {
     const chips = el("td", { class: "chips" });
     for (const ev of s.events) chips.append(el("span", {}, ev));
-    const tr = el("tr", {}, el("td", { class: "num" }, String(i + 1)), el("td", { class: "num" }, String(s.order)),
-      chips, el("td", { class: "num" }, fmtP(s.probability)));
+    const tr = el("tr", { "data-no": i + 1, title: "Показать на схеме" }, el("td", { class: "num" }, String(i + 1)),
+      el("td", { class: "num" }, String(s.order)), chips, el("td", { class: "num" }, fmtP(s.probability)));
+    // Выделение текста мышью (скопировать имена) — не щелчок по строке.
+    tr.onclick = () => { if (!String(getSelection())) pickSet(which, i + 1, s.events); };
     if (cut) {
       acc += s.probability;
       const sh = share(s.probability);
@@ -1745,6 +1761,138 @@ function ordersLine(report, share) {
   });
   return el("div", { class: "meta orders" }, "По порядку — " + parts.join(" · "));
 }
+
+// ---- Подсветка набора на схеме ----
+// Щелчок по строке сечения или пути подсвечивает набор на схеме: его элементы
+// и узлы, до которых доходит их отказ (у пути — их исправность). Схема для
+// этого вычисляется при «отказали ровно элементы сечения, остальные исправны»
+// (у пути — «исправны ровно элементы пути»), и подсвечиваются узлы в том же
+// состоянии, что и набор: у сечения — в отказе, у пути — работающие.
+// Вычисляется заново при каждой отрисовке: правка схемы сразу видна.
+let hl = null;   // { which: "cut" | "path", no, events } или null
+
+// Узлы схемы в отказе, когда отказали ровно элементы failed. Логика — та же,
+// что у движка (io.rs): дерево — вентили над событиями; СФЦ — узел работает,
+// если исправен его элемент (у фиктивного его нет), доставляют сигнал все
+// И-дуги и хотя бы одна ИЛИ-дуга (пустая группа не мешает), а инверсная дуга
+// доставляет сигнал, когда источник НЕ работает.
+function failedNodes(failed) {
+  const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+  const ins = new Map();
+  for (const e of graph.edges) {
+    if (!ins.has(e.parent)) ins.set(e.parent, []);
+    ins.get(e.parent).push(e);
+  }
+  const sfc = graph.kind === "sfc";
+  const memo = new Map();
+  const down = (id) => {
+    if (memo.has(id)) return memo.get(id);
+    memo.set(id, false);   // циклов схема не допускает, но и зависать не должна
+    const n = byId.get(id), es = ins.get(id) || [];
+    let v = false;
+    if (n && sfc) {
+      const conj = [], disj = [];
+      for (const e of es) (e.conj ? conj : disj).push(down(e.child) === !!e.inverse);
+      const works = !(n.dist && failed.has(id)) && !conj.includes(false) && (!disj.length || disj.includes(true));
+      v = !works;
+    } else if (n && n.role === "event") v = failed.has(id);
+    else if (n) {
+      const m = es.length, k = es.filter((e) => down(e.child)).length;
+      v = !!{ and: k === m, or: k > 0, xor: k % 2 === 1, not: k === 0,
+        atleast: k >= (n.k || 2), nand: k < m, nor: k === 0 }[n.op];
+    }
+    memo.set(id, v);
+    return v;
+  };
+  const out = new Set();
+  for (const n of graph.nodes) if (down(n.id)) out.add(n.id);
+  return out;
+}
+
+// Что подсвечено: src — элементы набора, hit — узлы в том же состоянии, что
+// набор, top — дошло ли это состояние до вершины.
+function hlState() {
+  if (!hl) return null;
+  const src = new Set(hl.events);
+  let hit;
+  if (hl.which === "path") {
+    const down = failedNodes(new Set(graph.nodes.map((n) => n.id).filter((id) => !src.has(id))));
+    hit = new Set(graph.nodes.map((n) => n.id).filter((id) => !down.has(id)));
+  } else hit = failedNodes(src);
+  const { top } = findTop();
+  return { src, hit, top: !!top && hit.has(top.id) };
+}
+// Дуга подсвечена, если по ней это состояние пришло в узел: оба конца в нём.
+// У инверсной дуги СФЦ и у входа НЕ, И-НЕ, ИЛИ-НЕ — наоборот: источник не в нём.
+function hlEdge(st, e) {
+  if (!st.hit.has(e.parent)) return false;
+  const p = nodeById(e.parent);
+  const neg = graph.kind === "sfc" ? !!e.inverse : !!p && ["not", "nand", "nor"].includes(p.op);
+  return st.hit.has(e.child) !== neg;
+}
+
+// Плашка над схемой: что подсвечено и чем это кончается для вершины.
+function renderHlBanner(st) {
+  const b = $("hl-banner");
+  b.textContent = "";
+  b.hidden = !st;
+  if (!st) return;
+  b.className = "hl-banner " + hl.which;
+  const sfc = graph.kind === "sfc", cut = hl.which === "cut";
+  const on = hl.events.filter((id) => nodeById(id)), off = hl.events.filter((id) => !nodeById(id));
+  const chips = el("span", { class: "chips" });
+  for (const id of on) chips.append(el("span", {}, id));
+  const one = hl.events.length === 1;
+  let msg;
+  if (st.top && cut) msg = (one ? "его отказ " : "их совместный отказ ") + (sfc ? "нарушает критерий" : "приводит к отказу системы");
+  else if (st.top) msg = sfc ? (one ? "его" : "их") + " работоспособности достаточно для выполнения критерия"
+    : (one ? "пока он исправен" : "пока они исправны") + ", система не откажет";
+  else msg = (cut ? "до вершины отказ не доходит" : (one ? "его" : "их") + " исправности не хватает") +
+    " — схема изменилась после расчёта или немонотонна";
+  const text = el("span", {}, el("b", {}, (cut ? "Сечение" : "Путь") + " №" + hl.no + ": "), chips, " — " + msg + ".");
+  if (off.length) text.append(el("span", { class: "warn" }, " Нет на схеме: " + off.join(", ") + "."));
+  const close = el("button", { type: "button", class: "secondary", title: "Снять подсветку (Esc)" }, "✕");
+  close.onclick = clearHl;
+  b.append(text, close);
+}
+
+// Щелчок по строке набора: подсветить его, повторный щелчок — снять.
+function pickSet(which, no, events) {
+  if (hl && hl.which === which && hl.no === no) { clearHl(); return; }
+  hl = { which, no, events };
+  if (!$("tab-diagram").classList.contains("active")) switchTab("diagram");
+  markHlRows();
+  renderEdges(); renderNodes();
+  revealNodes(events);
+}
+function clearHl() {
+  if (!hl) return;
+  hl = null;
+  markHlRows();
+  renderEdges(); renderNodes();
+}
+function markHlRows() {
+  for (const tr of document.querySelectorAll("#results tr.on[data-no]")) tr.classList.remove("on");
+  if (!hl) return;
+  for (const tr of document.querySelectorAll(`#results .sets.${hl.which} tr[data-no]`)) {
+    if (tr.dataset.no === String(hl.no)) tr.classList.add("on");
+  }
+}
+// Сдвинуть холст, не меняя масштаба, чтобы узлы ids были видны: если хоть один
+// за краем или под плашкой — поставить их рамку в центр того, что видно.
+function revealNodes(ids) {
+  const ns = ids.map(nodeById).filter(Boolean);
+  if (!ns.length) return;
+  const minx = Math.min(...ns.map((n) => n.x)), maxx = Math.max(...ns.map((n) => n.x + NODE_W));
+  const miny = Math.min(...ns.map((n) => n.y)), maxy = Math.max(...ns.map((n) => n.y + NODE_H));
+  const r = canvas.getBoundingClientRect(), b = $("hl-banner");
+  const top = b.hidden ? 0 : b.offsetTop + b.offsetHeight;   // плашка закрывает верх холста
+  const sx = (x) => view.tx + x * view.s, sy = (y) => view.ty + y * view.s;
+  if (sx(minx) >= 0 && sx(maxx) <= r.width && sy(miny) >= top && sy(maxy) <= r.height) return;
+  view.tx = r.width / 2 - ((minx + maxx) / 2) * view.s;
+  view.ty = (top + r.height) / 2 - ((miny + maxy) / 2) * view.s;
+  render();
+}
 // Сетка кривой: CURVE_STEPS равных шагов от 0 до наибольшего момента, без
 // моментов, которые уже есть в запросе.
 const CURVE_STEPS = 60;
@@ -1764,6 +1912,7 @@ function curveGrid(base) {
 // моменты из запроса (остальные — сетка кривой); curve — эти моменты, если
 // кривая строится.
 function renderResponse(resp, view) {
+  clearHl();   // номера наборов — из прежнего ответа
   const kind = view.kind;
   const shown = resp.results.slice(0, view.shown || resp.results.length);
   const out = $("results"); out.textContent = "";
@@ -2192,7 +2341,7 @@ $("fit").addEventListener("click", fitView);
 $("clear").addEventListener("click", () => {
   if (!confirm("Очистить схему?")) return;
   graph = { kind: graph.kind, prob: graph.prob, nodes: [], edges: [] }; seq = 0;
-  $("input").value = ""; jsonEdited = false; setFileName("");
+  $("input").value = ""; jsonEdited = false; setFileName(""); clearHl();
   select(null); render();
 });
 // Привести все узлы к одному виду вероятности; новые узлы тоже получат его.
@@ -2251,7 +2400,7 @@ $("mk-modal").addEventListener("mousedown", (e) => { if (e.target.id === "mk-mod
 document.addEventListener("keydown", (e) => {
   const mod = e.ctrlKey || e.metaKey;
   if (e.key === "Escape" && !$("mk-modal").classList.contains("hidden")) closeMarkov();
-  else if (e.key === "Escape" && editorKeyAllowed(e)) select(null);
+  else if (e.key === "Escape" && editorKeyAllowed(e)) { select(null); clearHl(); }
   else if (mod && e.key === "Enter") analyze();
   // e.code — физическая клавиша: в русской раскладке e.key был бы «ы» / «щ».
   else if (mod && e.code === "KeyS") { e.preventDefault(); saveFile(); }
