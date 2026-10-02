@@ -115,6 +115,12 @@ select:focus, input:not([type=checkbox]):focus {
 /* Кнопки палитры — строки списка, как беседы в боковой панели: без рамки,
    подсвечиваются при наведении. */
 button.pal { width: 100%; text-align: left; padding: 6px 10px; border-color: transparent; background: transparent; }
+/* Образец вида узла на кнопке палитры — те же цвета и линии, что на холсте. */
+button.pal-node { display: flex; align-items: center; gap: 6px; }
+.swatch { flex: 0 0 16px; height: 11px; border: 1.5px solid; border-radius: 3px; }
+.swatch.event, .swatch.sfc { background: var(--event); border-color: var(--event-br); }
+.swatch.gate { background: var(--gate); border-color: var(--gate-br); }
+.swatch.fictive { background: var(--panel); border: 1.5px dashed var(--gate-br); border-radius: 6px; }
 .pal-hint { font-size: 11px; color: var(--muted); line-height: 1.5; margin: 0 8px; }
 /* Галочка в палитре: подпись обычным текстом, сама галочка без полей. */
 .pal-check { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 13px; cursor: pointer;
@@ -130,8 +136,14 @@ button.pal { width: 100%; text-align: left; padding: 6px 10px; border-color: tra
 .node.dragging rect { cursor: grabbing; }
 .node text { font: 12px var(--font); fill: var(--text); pointer-events: none; user-select: none; }
 .node .sub { font-size: 10px; fill: var(--muted); font-family: var(--mono); }
-.node.event .body { fill: var(--event); stroke: var(--event-br); }
-.node.gate .body, .node.sfc .body { fill: var(--gate); stroke: var(--gate-br); }
+.node.event .body, .node.sfc .body { fill: var(--event); stroke: var(--event-br); }
+.node.gate .body { fill: var(--gate); stroke: var(--gate-br); }
+/* Фиктивный узел СФЦ (без собственного элемента, только логика): полый,
+   пунктирный, со скруглёнными торцами. Отличается формой и линией, а не только
+   цветом, — читается и при ч/б печати. Стоит до .selected, чтобы выделение
+   (та же специфичность) перекрашивало рамку. */
+.node.fictive .body { fill: var(--panel); stroke: var(--gate-br); stroke-dasharray: 6 4; rx: 26px; }
+.node.fictive .sub { font-style: italic; }
 .node .body { stroke-width: 1.5; rx: 8; }
 .node.top .body { stroke-width: 3; }
 .node.selected .body { stroke: var(--sel); stroke-width: 3; }
