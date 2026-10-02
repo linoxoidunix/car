@@ -1,6 +1,6 @@
 # 20. `crates/cra-server/assets/index.html` — каркас страницы
 
-**Размер:** 201 строка. **Задача:** задать разметку интерфейса. Вся логика —
+**Размер:** 202 строки. **Задача:** задать разметку интерфейса. Вся логика —
 в [`app.js`](web-app-js.md).
 
 ## Устройство страницы
@@ -16,7 +16,7 @@
 │ + ИЛИ    │      │ n1 │──────│ n3 │            │  выбранного  │
 │ …        │      └────┘      └────┘            │  узла        │
 ├──────────┴────────────────────────────────────┴──────────────┤
-│ Результаты     Считать: ☑ сечения ☑ пути ☑ ROBDD [свернуть ▾]│  drawer
+│ Результаты  Считать: ☑ сечения ☑ пути ☑ значимость ☑ ROBDD [▾]│  drawer
 │ P = 0.0595 · сечения · пути                                  │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -44,6 +44,7 @@
   <span class="calc-title">Считать:</span>
   <label title="Минимальные сечения (МНС)"><input type="checkbox" data-calc="cut_sets" checked> сечения</label>
   <label title="Минимальные пути (МНП)"><input type="checkbox" data-calc="path_sets" checked> пути</label>
+  <label title="Меры значимости элементов: …"><input type="checkbox" data-calc="importance" checked> значимость</label>
   <label title="Диаграммы решений (ROBDD) модулей"><input type="checkbox" data-calc="bdd" checked> ROBDD</label>
 </div>
 ```

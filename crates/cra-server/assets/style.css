@@ -29,6 +29,7 @@
   --gate-br: #6fb48a;
   --sel: #4d6bfe;
   --edge: #a0a6b2;
+  --bar: rgba(59, 130, 246, .18);
   --scroll: #d1d5db;
   --shadow: 0 1px 2px rgba(20, 30, 60, .05), 0 6px 20px rgba(20, 30, 60, .07);
   --backdrop: rgba(20, 24, 40, .35);
@@ -45,7 +46,7 @@
     --primary: #4d6bfe; --primary-hover: #5f7bff;
     --ok: #4cc27a; --warn: #a9c8ff; --err: #f87171;
     --event: #1e2d4a; --event-br: #4f7fd9; --gate: #22352a; --gate-br: #5aa476;
-    --sel: #6f9bff; --edge: #6b707a; --scroll: #4a4c52;
+    --sel: #6f9bff; --edge: #6b707a; --bar: rgba(111, 155, 255, .24); --scroll: #4a4c52;
     --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .35);
     --backdrop: rgba(0, 0, 0, .55);
   }
@@ -249,8 +250,14 @@ td.num { font-family: var(--mono); text-align: right; white-space: nowrap; }
 .warn { color: var(--warn); }
 
 /* ---- ROBDD в результатах ---- */
-.results details.bdd > summary { font-size: 13px; font-weight: 600; color: var(--muted);
+.results details.fold > summary { font-size: 13px; font-weight: 600; color: var(--muted);
   margin: 14px 0 5px; cursor: pointer; }
+/* ---- значимость элементов ---- */
+.imp-table th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.imp-table th.sortable:hover, .imp-table th.on { color: var(--text); }
+.imp-table th.num { text-align: right; }
+/* FV — доля риска: полоска под числом читается быстрее столбца цифр. */
+.imp-table td.bar { background: linear-gradient(to right, var(--bar) var(--w), transparent var(--w)); }
 .bdd-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 6px; }
 .bdd-tabs button { padding: 2px 8px; font: 12px var(--mono); background: transparent; }
 .bdd-tabs button.on { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
