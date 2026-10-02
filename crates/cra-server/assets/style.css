@@ -335,6 +335,7 @@ td.num { font-family: var(--mono); text-align: right; white-space: nowrap; }
 .ch-tick { font: 10px var(--mono); fill: var(--muted); }
 .ch-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .ch-end { fill: var(--accent); }
+.ch-mark { fill: var(--panel); stroke: var(--accent); stroke-width: 2; }
 .ch-end-label { font: 11px var(--mono); fill: var(--text); }
 .ch-cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
 .ch-dot { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }

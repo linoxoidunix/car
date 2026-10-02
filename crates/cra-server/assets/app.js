@@ -1009,7 +1009,7 @@ function mkAddTransition(from, to) {
 }
 
 // ---- живой график q(t) (считает тот же бэкенд) ----
-const MKCHART = { pts: [], xmax: 0, geom: null };
+const MKCHART = { pts: [], geom: null };
 
 function jsClockScale(dist) {
   switch (dist.type) {
@@ -1044,33 +1044,39 @@ async function mkPlot() {
     const r = await fetch("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req) });
     const data = await r.json();
     if (!r.ok) return mkPlotStatus(data.error || "HTTP " + r.status);
-    const pts = data.results.map((x) => ({ t: x.time, q: x.top_probability }));
-    drawQChart(pts, xmax);
-    mkPlotStatus("q(" + fmtNum(xmax) + ") = " + fmtP(pts[pts.length - 1].q));
+    const pts = data.results.map((x) => ({ t: x.time, v: x.top_probability }));
+    drawChart($("mk-chart-svg"), MKCHART, pts, xmax, { ymax: 1, name: "q" });
+    mkPlotStatus("q(" + fmtNum(xmax) + ") = " + fmtP(pts[pts.length - 1].v));
   } catch (e) { mkPlotStatus("ошибка: " + e.message); }
 }
 
-function drawQChart(pts, xmax) {
-  const svg = $("mk-chart-svg");
+// ---- линейный график: q(t) марковского узла, P(t) системы ----
+// Один ряд точек {t, v}. st хранит точки и геометрию для подсказки при
+// наведении. opts: ymax — верх оси значений (1 для вероятности узла, «круглое»
+// число над максимумом — для системы, иначе малые вероятности слипнутся у
+// нуля); name — буква значения в подсказке; marks — моменты, отмеченные точками.
+function drawChart(svg, st, pts, xmax, opts) {
   const rect = svg.getBoundingClientRect();
   const W = rect.width, H = rect.height;
-  if (W < 10 || H < 10) { setTimeout(() => drawQChart(pts, xmax), 40); return; }
+  if (W < 10 || H < 10) { setTimeout(() => drawChart(svg, st, pts, xmax, opts), 40); return; }
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   svg.textContent = "";
-  const L = 46, R = 50, T = 12, B = 24;
+  const ymax = opts.ymax || 1;
+  const L = 52, R = 56, T = 12, B = 24;
   const x = (t) => L + (xmax > 0 ? t / xmax : 0) * (W - L - R);
-  const y = (q) => H - B - q * (H - T - B);
-  MKCHART.pts = pts; MKCHART.xmax = xmax; MKCHART.geom = { L, R, T, B, W, H, x, y };
+  const y = (v) => H - B - (v / ymax) * (H - T - B);
+  Object.assign(st, { pts, name: opts.name || "q", geom: { L, R, T, B, W, H, xmax, x, y } });
 
   const add = (n) => svg.appendChild(n);
-  // Recessive gridlines + y ticks (q = 0..1).
-  for (const q of [0, 0.25, 0.5, 0.75, 1]) {
+  // Recessive gridlines + y ticks.
+  for (let i = 0; i <= 4; i++) {
+    const v = +((ymax * i) / 4).toPrecision(6);
     const line = document.createElementNS(SVGNS, "line");
-    line.setAttribute("class", q === 0 ? "ch-axis" : "ch-grid");
+    line.setAttribute("class", i === 0 ? "ch-axis" : "ch-grid");
     line.setAttribute("x1", L); line.setAttribute("x2", W - R);
-    line.setAttribute("y1", y(q)); line.setAttribute("y2", y(q));
+    line.setAttribute("y1", y(v)); line.setAttribute("y2", y(v));
     add(line);
-    const lbl = text(L - 6, y(q) + 3, q.toString(), "ch-tick");
+    const lbl = text(L - 6, y(v) + 3, fmtNum(v), "ch-tick");
     lbl.setAttribute("text-anchor", "end"); add(lbl);
   }
   // x axis + ticks.
@@ -1079,42 +1085,55 @@ function drawQChart(pts, xmax) {
   ax.setAttribute("x1", L); ax.setAttribute("x2", L);
   ax.setAttribute("y1", T); ax.setAttribute("y2", H - B); add(ax);
   for (let i = 0; i <= 4; i++) {
-    const t = (xmax * i) / 4;
+    const t = +((xmax * i) / 4).toPrecision(6);
     const lbl = text(x(t), H - B + 14, fmtNum(t), "ch-tick");
     lbl.setAttribute("text-anchor", "middle"); add(lbl);
   }
   // Single-series line (title in the panel head names it — no legend).
   let dpath = "";
-  pts.forEach((p, i) => { dpath += (i ? "L" : "M") + x(p.t) + "," + y(p.q); });
+  pts.forEach((p, i) => { dpath += (i ? "L" : "M") + x(p.t) + "," + y(p.v); });
   const path = document.createElementNS(SVGNS, "path");
   path.setAttribute("class", "ch-line"); path.setAttribute("d", dpath); add(path);
+  for (const t of opts.marks || []) {
+    const p = pts.find((q) => q.t === t);
+    if (!p) continue;
+    const m = document.createElementNS(SVGNS, "circle");
+    m.setAttribute("class", "ch-mark"); m.setAttribute("cx", x(p.t)); m.setAttribute("cy", y(p.v)); m.setAttribute("r", 3.5); add(m);
+  }
   // Direct-label the final value.
   const last = pts[pts.length - 1];
   const dot = document.createElementNS(SVGNS, "circle");
-  dot.setAttribute("class", "ch-end"); dot.setAttribute("cx", x(last.t)); dot.setAttribute("cy", y(last.q)); dot.setAttribute("r", 3); add(dot);
-  const el2 = text(x(last.t) + 5, y(last.q) + 3, fmtP(last.q), "ch-end-label"); add(el2);
+  dot.setAttribute("class", "ch-end"); dot.setAttribute("cx", x(last.t)); dot.setAttribute("cy", y(last.v)); dot.setAttribute("r", 3); add(dot);
+  add(text(x(last.t) + 5, y(last.v) + 3, fmtP(last.v), "ch-end-label"));
   // Hover overlay group (populated on mousemove).
-  const ov = document.createElementNS(SVGNS, "g"); ov.setAttribute("id", "ch-overlay"); add(ov);
+  const ov = document.createElementNS(SVGNS, "g"); ov.setAttribute("class", "ch-overlay"); add(ov);
+}
+// «Круглый» верх оси над максимумом: 1, 2, 4 или 8 × 10^k (шаг сетки — четверть).
+function niceMax(v) {
+  if (!(v > 0)) return 1;
+  const k = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const m of [1, 2, 4, 8]) if (m * k >= v * (1 - 1e-12)) return m * k;
+  return 10 * k;
 }
 
-function mkChartHover(ev) {
-  const g = MKCHART.geom; if (!g || !MKCHART.pts.length) return;
-  const svg = $("mk-chart-svg"); const rect = svg.getBoundingClientRect();
+function chartHover(ev, svg, st) {
+  const g = st.geom; if (!g || !st.pts.length) return;
+  const rect = svg.getBoundingClientRect();
   const mx = ev.clientX - rect.left;
   const t = g.xmax * (mx - g.L) / (g.W - g.L - g.R);
-  if (t < 0 || t > g.xmax) return mkChartHoverClear();
+  if (!(t >= 0 && t <= g.xmax)) return chartHoverClear(svg);
   // nearest point
   let best = 0, bd = Infinity;
-  MKCHART.pts.forEach((p, i) => { const dd = Math.abs(p.t - t); if (dd < bd) { bd = dd; best = i; } });
-  const p = MKCHART.pts[best];
-  const ov = $("ch-overlay"); if (!ov) return; ov.textContent = "";
-  const cx = g.x(p.t), cy = g.y(p.q);
+  st.pts.forEach((p, i) => { const dd = Math.abs(p.t - t); if (dd < bd) { bd = dd; best = i; } });
+  const p = st.pts[best];
+  const ov = svg.querySelector(".ch-overlay"); if (!ov) return; ov.textContent = "";
+  const cx = g.x(p.t), cy = g.y(p.v);
   const cross = document.createElementNS(SVGNS, "line");
   cross.setAttribute("class", "ch-cross"); cross.setAttribute("x1", cx); cross.setAttribute("x2", cx);
   cross.setAttribute("y1", g.T); cross.setAttribute("y2", g.H - g.B); ov.appendChild(cross);
   const dot = document.createElementNS(SVGNS, "circle");
   dot.setAttribute("class", "ch-dot"); dot.setAttribute("cx", cx); dot.setAttribute("cy", cy); dot.setAttribute("r", 4); ov.appendChild(dot);
-  const label = `t=${fmtNum(p.t)}  q=${fmtP(p.q)}`;
+  const label = `t=${fmtNum(p.t)}  ${st.name}=${fmtP(p.v)}`;
   const tw = label.length * 6.4 + 10;
   let bx = cx + 8; if (bx + tw > g.W - g.R) bx = cx - 8 - tw;
   const by = Math.max(g.T + 2, cy - 22);
@@ -1123,7 +1142,7 @@ function mkChartHover(ev) {
   bg.setAttribute("width", tw); bg.setAttribute("height", 18); bg.setAttribute("rx", 4); ov.appendChild(bg);
   const tip = text(bx + 5, by + 13, label, "ch-tip"); ov.appendChild(tip);
 }
-function mkChartHoverClear() { const ov = $("ch-overlay"); if (ov) ov.textContent = ""; }
+function chartHoverClear(svg) { const ov = svg.querySelector(".ch-overlay"); if (ov) ov.textContent = ""; }
 
 // ---- modal canvas interaction ----
 (function wireMk() {
@@ -2077,8 +2096,8 @@ $("mk-initial").addEventListener("change", () => {
   mkRender();
 });
 $("mk-plot").addEventListener("click", mkPlot);
-$("mk-chart-svg").addEventListener("mousemove", mkChartHover);
-$("mk-chart-svg").addEventListener("mouseleave", mkChartHoverClear);
+$("mk-chart-svg").addEventListener("mousemove", (e) => chartHover(e, $("mk-chart-svg"), MKCHART));
+$("mk-chart-svg").addEventListener("mouseleave", () => chartHoverClear($("mk-chart-svg")));
 $("mk-modal").addEventListener("mousedown", (e) => { if (e.target.id === "mk-modal") closeMarkov(); });
 document.addEventListener("keydown", (e) => {
   const mod = e.ctrlKey || e.metaKey;
