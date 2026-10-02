@@ -176,6 +176,38 @@ button:hover:not(:disabled) { background-color: var(--hover); }
 принимает клики — в двухпиксельную линию попасть мышью практически невозможно.
 Приём разобран в [web-app-js.md](web-app-js.md).
 
+### Тянущаяся дуга
+
+```css
+.temp-edge { …; stroke-dasharray: 4 3; pointer-events: none; }
+.temp-edge.disj { marker-end: url(#arrow); }
+.temp-edge.conj { stroke: var(--gate-br); marker-end: url(#dot); }
+```
+
+Пунктир значит «дуга ещё не создана». В СФЦ у неё уже окончание и цвет той
+дуги, которая получится (тип из инструмента «Новая дуга»). `pointer-events:
+none` обязателен: конец линии и её маркер лежат прямо под курсором, и без этого
+`mouseup` достался бы им, а не узлу, на который дугу бросили.
+
+## Инструмент «Новая дуга»
+
+```css
+.arc-tool[hidden] { display: none; }
+.arc-seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.arc-seg button.on { background: var(--event); border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent); }
+.arc-sample.conj line { stroke: var(--gate-br); }
+.arc-sample.inv line  { stroke-dasharray: 4 2; }
+```
+
+Две пары кнопок-переключателей в сетке на две колонки. Выбранная кнопка
+выделена рамкой двойной толщины и заливкой, невыбранная — приглушённым
+текстом. Правило `[hidden]` нужно потому, что `display: flex` у `.arc-tool`
+перебил бы встроенное в браузер `display: none` для атрибута `hidden`, и
+блок не прятался бы в дереве отказов. Образцы `.arc-sample` повторяют
+кодирование дуг на холсте: точка и зелёный цвет — И, стрелка — ИЛИ, пунктир —
+инверсный выход.
+
 ## Курсоры
 
 ```css

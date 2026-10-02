@@ -43,6 +43,33 @@
     <aside class="palette">
       <div class="pal-title">Добавить</div>
       <div id="palette-buttons"></div>
+      <!-- Инструмент «Новая дуга» (только СФЦ): с каким типом и выходом
+           создаётся следующая нарисованная дуга. Видимость и подсветку
+           выбранных кнопок задаёт app.js (renderArcTool). -->
+      <div id="arc-tool" class="arc-tool" hidden>
+        <hr>
+        <div class="pal-title">Новая дуга</div>
+        <div class="arc-seg" role="group" aria-label="Тип новой дуги">
+          <button type="button" data-arc="conj:0" title="Дизъюнктивная (ИЛИ) — клавиша 1">
+            <svg class="arc-sample" viewBox="0 0 30 10"><line x1="1" y1="5" x2="22" y2="5"></line><path d="M21,1 L29,5 L21,9 z"></path></svg>
+            ИЛИ ≥1
+          </button>
+          <button type="button" data-arc="conj:1" title="Конъюнктивная (И) — клавиша 2">
+            <svg class="arc-sample conj" viewBox="0 0 30 10"><line x1="1" y1="5" x2="22" y2="5"></line><circle cx="25" cy="5" r="4"></circle></svg>
+            И &amp;
+          </button>
+        </div>
+        <div class="arc-seg" role="group" aria-label="Выход новой дуги">
+          <button type="button" data-arc="inverse:0" title="Прямой выход — клавиша 3">
+            <svg class="arc-sample" viewBox="0 0 30 10"><line x1="1" y1="5" x2="29" y2="5"></line></svg>
+            прямой
+          </button>
+          <button type="button" data-arc="inverse:1" title="Инверсный выход (¬) — клавиша 4">
+            <svg class="arc-sample inv" viewBox="0 0 30 10"><line x1="1" y1="5" x2="29" y2="5"></line></svg>
+            инверсный
+          </button>
+        </div>
+      </div>
       <hr>
       <div class="pal-title">Вероятности</div>
       <label class="pal-check" title="Отмечено — постоянные вероятности всех узлов задаются как вероятность успеха p, снято — как вероятность отказа q. Числа пересчитываются (p = 1 − q), расчёт не меняется. У отдельного узла вид меняется в инспекторе.">
@@ -58,8 +85,9 @@
       <p class="pal-hint">
         ЛКМ по холсту — снять выделение. Тянуть узел — переместить.
         Тянуть от нижнего порта (○) к другому узлу — вход.
-        Клик по стрелке — выбрать дугу (в СФЦ: тип И/ИЛИ и
-        прямой/инверсный выход задаются в инспекторе). Del — удалить.
+        В СФЦ новая дуга получает тип из «Новая дуга» (клавиши 1–4);
+        Shift+клик по дуге — присвоить ей этот тип.
+        Клик по стрелке — выбрать дугу и поправить её в инспекторе. Del — удалить.
       </p>
     </aside>
 
