@@ -8,7 +8,7 @@
 //! расчёт вероятности (разложение Шеннона) и минимальные наборы (алгоритм
 //! Рози, minsol) — из них получаем минимальные сечения и пути.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 pub const FALSE: u32 = 0;
@@ -22,6 +22,15 @@ struct BddNode {
     var: u32,
     lo: u32,
     hi: u32,
+}
+
+/// Узел BDD для выдачи наружу (см. `Bdd::export`): уровень переменной и ветки
+/// в новой, плотной нумерации.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExportNode {
+    pub var: u32,
+    pub lo: u32,
+    pub hi: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -64,6 +73,43 @@ impl Bdd {
 
     pub fn node_count(&self) -> usize {
         self.nodes.len()
+    }
+
+    /// Сама функция `root` как граф — чтобы её можно было нарисовать.
+    ///
+    /// В хранилище кроме неё лежат промежуточные узлы, оставшиеся от apply
+    /// (поэтому `node_count` больше); берём только достижимые из корня. Нумерация
+    /// новая и плотная: 0 = FALSE, 1 = TRUE, узлы — с 2, сверху вниз по уровням
+    /// (внутри уровня — в порядке обхода). Узел `nodes[i]` имеет id `i + 2`.
+    /// Возвращает (id корня, узлы).
+    pub fn export(&self, root: u32) -> (u32, Vec<ExportNode>) {
+        let mut seen: HashSet<u32> = HashSet::new();
+        let mut order: Vec<u32> = Vec::new();
+        let mut stack: Vec<u32> = vec![root];
+        while let Some(u) = stack.pop() {
+            if u == FALSE || u == TRUE || !seen.insert(u) {
+                continue;
+            }
+            order.push(u);
+            let n = self.nodes[u as usize];
+            stack.push(n.hi);
+            stack.push(n.lo);
+        }
+        // Устойчивая сортировка: по уровню, а внутри уровня порядок обхода
+        // сохраняется — выдача детерминирована. Ветки всегда ведут на уровни
+        // ниже, поэтому дети стоят в списке после родителей.
+        order.sort_by_key(|&u| self.nodes[u as usize].var);
+        let new_id: HashMap<u32, u32> =
+            order.iter().enumerate().map(|(i, &u)| (u, i as u32 + 2)).collect();
+        let map = |u: u32| if u == FALSE || u == TRUE { u } else { new_id[&u] };
+        let nodes = order
+            .iter()
+            .map(|&u| {
+                let n = self.nodes[u as usize];
+                ExportNode { var: n.var, lo: map(n.lo), hi: map(n.hi) }
+            })
+            .collect();
+        (map(root), nodes)
     }
 
     /// Сделать (или найти) узел. Два правила ROBDD: если обе ветки равны —
@@ -391,6 +437,45 @@ mod tests {
         assert_eq!(sets.len(), 2);
         let kept: Vec<u32> = sets.iter().map(|(s, _)| s[0]).collect();
         assert!(kept.contains(&1) && kept.contains(&2), "kept = {kept:?}");
+    }
+
+    #[test]
+    fn export_keeps_only_the_function() {
+        // f = a | (a & b) = a: the store also holds the node of a & b, left
+        // over from apply, but the function itself is a single node.
+        let mut b = Bdd::new();
+        let a = b.var(0);
+        let x = b.var(1);
+        let ab = b.and(a, x);
+        let f = b.or(a, ab);
+        assert!(b.node_count() > 3);
+        let (root, nodes) = b.export(f);
+        assert_eq!(root, 2);
+        assert_eq!(nodes, vec![ExportNode { var: 0, lo: FALSE, hi: TRUE }]);
+        // Terminal roots export as themselves, with no nodes.
+        assert_eq!(b.export(TRUE), (TRUE, Vec::new()));
+    }
+
+    #[test]
+    fn export_orders_levels_top_down() {
+        // 2-of-3 over levels 0..2: every branch points to a node further down
+        // the list (a higher level) or to a terminal.
+        let mut b = Bdd::new();
+        let xs = [b.var(0), b.var(1), b.var(2)];
+        let f = b.atleast(2, &xs);
+        let (root, nodes) = b.export(f);
+        assert_eq!(root, 2);
+        assert_eq!(nodes.len(), 4); // x0; x1 twice (after x0=0 / x0=1); x2 once
+        for (i, n) in nodes.iter().enumerate() {
+            for c in [n.lo, n.hi] {
+                if c > TRUE {
+                    let child = nodes[c as usize - 2];
+                    assert!(c as usize > i + 2 && child.var > n.var);
+                }
+            }
+        }
+        let levels: Vec<u32> = nodes.iter().map(|n| n.var).collect();
+        assert_eq!(levels, vec![0, 1, 1, 2]);
     }
 
     #[test]
