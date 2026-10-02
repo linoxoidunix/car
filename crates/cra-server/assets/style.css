@@ -297,11 +297,11 @@ td.bar { background-image: linear-gradient(to right, var(--bar) var(--w), transp
 .sets-table td.bar { min-width: 120px; }
 /* Строка — кнопка «показать на схеме»; показанная — цветом подсветки. Фон
    ячейки — цвет, а полоска доли — картинка поверх него, они не мешают друг другу. */
-.sets-table tr[data-no] { cursor: pointer; }
-.sets-table tr[data-no]:hover td { background-color: var(--bg); }
-.sets.cut tr.on td { background-color: var(--hl-cut-bg); }
+.sets-table tr[data-no], .imp-table tr[data-no] { cursor: pointer; }
+.sets-table tr[data-no]:hover td, .imp-table tr[data-no]:hover td { background-color: var(--bg); }
+.sets.cut tr.on td, .imp-table tr.on td { background-color: var(--hl-cut-bg); }
 .sets.path tr.on td { background-color: var(--hl-path-bg); }
-.sets.cut tr.on td:first-child { box-shadow: inset 3px 0 0 var(--hl-cut); }
+.sets.cut tr.on td:first-child, .imp-table tr.on td:first-child { box-shadow: inset 3px 0 0 var(--hl-cut); }
 .sets.path tr.on td:first-child { box-shadow: inset 3px 0 0 var(--hl-path); }
 .sets .orders { margin-top: 2px; }
 .spof { margin: 6px 0 2px; font-size: 12px; }
