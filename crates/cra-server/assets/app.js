@@ -30,7 +30,7 @@ const NODE_W = 132, NODE_H = 52;
 let arcStyle = { conj: false, inverse: false };
 // «Считать»: что, кроме вероятности вершины, просить у сервера. Тоже настройка
 // редактора (галочки в шапке панели результатов), изначально включено всё.
-let calc = { cut_sets: true, path_sets: true, bdd: true };
+let calc = { cut_sets: true, path_sets: true, bdd: true, importance: true };
 
 // ---- схема параметров распределений (числовые поля) ----
 const DIST_SCHEMA = {
@@ -1636,14 +1636,17 @@ function renderResponse(resp, kind) {
   for (const r of resp.results)
     table.append(el("tr", {}, el("td", { class: "num" }, String(r.time)), el("td", { class: "num" }, fmtP(r.top_probability))));
   out.append(table);
-  // Диаграммы — сразу под вероятностью, которую по ним посчитали: под списком
-  // из сотен наборов их было бы не найти.
-  const bdd = renderBdd(resp, kind);
-  if (bdd) out.append(bdd);
-  // Движок без выдачи ROBDD молча пропускает незнакомый флаг. Так бывает, когда
+  // Значимость и диаграммы — сразу под вероятностью: под списком из сотен
+  // наборов их было бы не найти.
+  const imp = renderImportance(resp); if (imp) out.append(imp);
+  const bdd = renderBdd(resp, kind); if (bdd) out.append(bdd);
+  // Движок старой версии молча пропускает незнакомые флаги. Так бывает, когда
   // в режиме разработки ассеты уже новые, а сервер не перезапущен.
-  else if (calc.bdd) out.append(el("p", { class: "warn" }, "⚠ ROBDD запрошены, но сервер их не вернул: " +
-    "похоже, он запущен до обновления движка. Пересоберите и перезапустите сервер."));
+  const missing = [];
+  if (calc.importance && !resp.importance) missing.push("значимость элементов");
+  if (calc.bdd && !resp.bdd) missing.push("ROBDD");
+  if (missing.length) out.append(el("p", { class: "warn" }, `⚠ Запрошено, но сервер не вернул: ${missing.join(", ")}. ` +
+    "Похоже, он запущен до обновления движка — пересоберите и перезапустите сервер."));
   const cuts = renderSets("Минимальные сечения (МНС)", resp.cut_sets); if (cuts) out.append(cuts);
   const paths = renderSets("Минимальные пути (МНП)", resp.path_sets); if (paths) out.append(paths);
   for (const w of resp.warnings || []) out.append(el("p", { class: "warn" }, "⚠ " + w));
@@ -1651,6 +1654,88 @@ function renderResponse(resp, kind) {
   out.append(el("div", { class: "meta" },
     `события: ${s.events} · узлы формулы: ${s.formula_nodes} · модули: ${s.modules} · узлы BDD: ${s.bdd_nodes}` +
     (s.noncoherent ? " · немонотонная схема" : "")));
+}
+
+// Сворачиваемый раздел результатов; раскрыт ли он, помнит браузер (ключ key).
+function foldSection(cls, key, title) {
+  const box = el("details", { class: "fold " + cls });
+  try { box.open = localStorage.getItem(key) !== "0"; } catch (e) { box.open = true; }
+  box.addEventListener("toggle", () => {
+    try { localStorage.setItem(key, box.open ? "1" : "0"); } catch (e) {}
+  });
+  box.append(el("summary", {}, title));
+  return box;
+}
+
+// ===========================================================================
+// Значимость элементов (options.importance)
+// ===========================================================================
+// Таблица мер значимости из ответа: щелчок по заголовку столбца сортирует по
+// нему (по убыванию; элемент — по алфавиту). Изначально — по FV, как отдаёт
+// сервер. Все меры — в терминах отказа, в дереве и в СФЦ одинаково.
+const IMP = { rep: null, sort: "criticality" };
+const IMP_COLS = [
+  ["event", "Элемент"], ["q", "q"], ["birnbaum", "Бирнбаум"],
+  ["criticality", "FV (критичность)"], ["raw", "RAW"], ["rrw", "RRW"],
+];
+const IMP_ROWS = 200;
+
+function renderImportance(resp) {
+  const rep = resp.importance;
+  if (!rep) return null;
+  IMP.rep = rep;
+  const box = foldSection("imp", "cra.imp", "Значимость элементов — " + rep.events.length);
+  box.append(el("div", { class: "meta" },
+    `Q = ${fmtP(rep.failure_probability)} — вероятность отказа системы при t = ${fmtNum(resp.results[0].time)}, ` +
+    "q — вероятность отказа элемента. Бирнбаум — чувствительность Q к q; FV — доля риска, " +
+    "связанная с элементом; RAW — во сколько раз вырастет Q, если элемент отказал; RRW — во " +
+    "сколько раз Q упадёт, если элемент безотказен. Щелчок по заголовку столбца — сортировка."));
+  box.append(el("table", { class: "imp-table" }));
+  renderImpTable(box);
+  return box;
+}
+
+function renderImpTable(box) {
+  const t = box.querySelector(".imp-table");
+  t.textContent = "";
+  const head = el("tr");
+  for (const [k, label] of IMP_COLS) {
+    const th = el("th", { class: "sortable" + (k === "event" ? "" : " num") + (k === IMP.sort ? " on" : "") },
+      label + (k === IMP.sort ? " ▾" : ""));
+    th.onclick = () => { IMP.sort = k; renderImpTable(box); };
+    head.append(th);
+  }
+  t.append(head);
+  const k = IMP.sort, rep = IMP.rep;
+  // null у RRW при Q > 0 — бесконечность (элемент в одиночку держит систему).
+  const val = (e) => (k === "rrw" && e.rrw == null && rep.failure_probability > 0 ? Infinity
+    : e[k] == null ? -Infinity : e[k]);
+  const rows = rep.events.slice();
+  if (k === "event") rows.sort((a, b) => a.event.localeCompare(b.event));
+  else rows.sort((a, b) => { const x = val(a), y = val(b); return x === y ? 0 : x < y ? 1 : -1; });
+  for (const e of rows.slice(0, IMP_ROWS)) {
+    const fv = el("td", { class: "num bar" }, fmtShare(e.criticality));
+    fv.style.setProperty("--w", Math.max(0, Math.min(1, e.criticality || 0)) * 100 + "%");
+    t.append(el("tr", {},
+      el("td", {}, e.event), el("td", { class: "num" }, fmtP(e.q)), el("td", { class: "num" }, fmtP(e.birnbaum)),
+      fv, el("td", { class: "num" }, fmtRatio(e.raw, rep)), el("td", { class: "num" }, fmtRatio(e.rrw, rep))));
+  }
+  if (rows.length > IMP_ROWS) {
+    t.append(el("tr", {}, el("td", { colspan: IMP_COLS.length, class: "meta" },
+      `показаны первые ${IMP_ROWS} из ${rows.length}`)));
+  }
+}
+// Доля риска в процентах: 62.43 %, 0.05 %, 3.1e-4 %.
+function fmtShare(x) {
+  if (x == null) return "—";
+  const pct = x * 100;
+  return (pct === 0 || Math.abs(pct) >= 0.01 ? pct.toFixed(2) : pct.toExponential(1)) + " %";
+}
+// Отношение (RAW, RRW): null — не определено (Q = 0) или, у RRW, бесконечно.
+function fmtRatio(x, rep) {
+  if (x == null) return rep.failure_probability > 0 ? "∞" : "—";
+  const a = Math.abs(x);
+  return a >= 1000 ? x.toExponential(2) : a >= 100 ? x.toFixed(0) : a >= 10 ? x.toFixed(1) : x.toFixed(3);
 }
 
 // ===========================================================================
@@ -1668,13 +1753,7 @@ function renderBdd(resp, kind) {
   const b = resp.bdd;
   if (!b || !b.modules || !b.modules.length) return null;
   BDD.rep = b; BDD.kind = kind; BDD.cur = b.top;
-  // Раздел сворачивается; свёрнут ли он, помнит браузер (cra.bdd).
-  const box = el("details", { class: "bdd" });
-  try { box.open = localStorage.getItem("cra.bdd") !== "0"; } catch (e) { box.open = true; }
-  box.addEventListener("toggle", () => {
-    try { localStorage.setItem("cra.bdd", box.open ? "1" : "0"); } catch (e) {}
-  });
-  box.append(el("summary", {}, "Диаграммы решений (ROBDD) — модулей: " + b.modules.length));
+  const box = foldSection("bdd", "cra.bdd", "Диаграммы решений (ROBDD) — модулей: " + b.modules.length);
   const one = kind === "sfc" ? "элемент работоспособен" : "событие произошло";
   const leaf = kind === "sfc" ? "критерий выполнен" : "вершинное событие наступило";
   const split = b.modules.length > 1
