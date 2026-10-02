@@ -488,6 +488,14 @@ canvas.addEventListener("mousedown", (ev) => {
     selectEdge(p, c);
     return;
   }
+  // Shift+тянуть по пустому месту — рамка: добавляет к выделению узлы,
+  // целиком попавшие в неё.
+  if (ev.shiftKey) {
+    if (selEdge) selectNodes([]);   // рамка выделяет узлы, а не дугу
+    drag = { mode: "frame", w0: screenToWorld(ev.clientX, ev.clientY), base: new Set(selNodes) };
+    ev.preventDefault();
+    return;
+  }
   // Empty space: pan. Промах мимо узла при Ctrl+клике не сбрасывает
   // набранное выделение.
   drag = { mode: "pan", sx: ev.clientX, sy: ev.clientY, tx: view.tx, ty: view.ty, moved: false,
@@ -522,6 +530,23 @@ window.addEventListener("mousemove", (ev) => {
     path.setAttribute("d", edgePath(drag.start, w));
     tmp.appendChild(path);
     if (sfc) tmp.appendChild(text(w.x + 10, w.y - 8, arcBadge(arcStyle), "edge-label" + kindCls));
+  } else if (drag.mode === "frame") {
+    const w = screenToWorld(ev.clientX, ev.clientY);
+    const x0 = Math.min(drag.w0.x, w.x), y0 = Math.min(drag.w0.y, w.y);
+    const x1 = Math.max(drag.w0.x, w.x), y1 = Math.max(drag.w0.y, w.y);
+    const tmp = $("temp-layer");
+    tmp.textContent = "";
+    const r = document.createElementNS(SVGNS, "rect");
+    r.setAttribute("class", "sel-frame");
+    r.setAttribute("x", x0); r.setAttribute("y", y0);
+    r.setAttribute("width", x1 - x0); r.setAttribute("height", y1 - y0);
+    tmp.appendChild(r);
+    // Выделение растёт по ходу жеста: сразу видно, что попадёт в рамку.
+    selNodes = new Set(drag.base);
+    for (const n of graph.nodes) {
+      if (n.x >= x0 && n.y >= y0 && n.x + NODE_W <= x1 && n.y + NODE_H <= y1) selNodes.add(n.id);
+    }
+    renderNodes();
   }
 });
 
@@ -544,6 +569,9 @@ window.addEventListener("mouseup", (ev) => {
     render();
   } else if (d.mode === "pan") {
     if (!d.moved && !d.keep) select(null);   // click empty = deselect
+  } else if (d.mode === "frame") {
+    $("temp-layer").textContent = "";
+    selectNodes(selNodes);   // инспектор — по итогу жеста, а не на каждое движение
   }
 });
 
@@ -650,7 +678,8 @@ function renderGroupInspector(body) {
   if (ids.length > GROUP_CHIPS) chips.append(` … и ещё ${ids.length - GROUP_CHIPS}`);
   body.appendChild(chips);
   body.appendChild(el("p", { class: "meta" },
-    "Ctrl+клик или Shift+клик по узлу — добавить к выделению или убрать. " +
+    "Ctrl+клик или Shift+клик по узлу — добавить к выделению или убрать, " +
+    "Shift+тянуть по холсту — добавить рамкой. " +
     "Тянуть любой выделенный узел — двигать всю группу. Esc — снять выделение."));
   const del = el("button", { class: "del" }, `Удалить выделенные (${ids.length})`);
   del.onclick = () => deleteNodes(ids);
