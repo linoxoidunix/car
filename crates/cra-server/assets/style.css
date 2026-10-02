@@ -191,6 +191,10 @@ button.pal-node { display: flex; align-items: center; gap: 6px; }
 .temp-edge { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 4 3; fill: none; pointer-events: none; }
 .temp-edge.disj { marker-end: url(#arrow); }
 .temp-edge.conj { stroke: var(--gate-br); marker-end: url(#dot); }
+/* Рамка выделения (Shift+тянуть по холсту). non-scaling-stroke держит линию
+   в один пиксель при любом масштабе холста. */
+.sel-frame { fill: var(--accent); fill-opacity: .08; stroke: var(--accent); stroke-width: 1;
+  stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; pointer-events: none; }
 
 /* ---- inspector ---- */
 .inspector {
