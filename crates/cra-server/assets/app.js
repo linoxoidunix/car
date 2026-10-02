@@ -148,6 +148,9 @@ function screenToWorld(sx, sy) {
 function nodeById(id) { return graph.nodes.find((n) => n.id === id); }
 function childrenEdges(id) { return graph.edges.filter((e) => e.parent === id); }
 function canHaveInputs(n) { return n.role === "gate" || n.role === "sfc"; }
+// CSS-класс вида узла. Узел СФЦ без собственного элемента (dist = null) —
+// фиктивный: чистая логика, и рисуется он иначе, чем реальный элемент.
+function nodeKind(n) { return n.role + (n.role === "sfc" && !n.dist ? " fictive" : ""); }
 function bottomPort(n) { return { x: n.x + NODE_W / 2, y: n.y + NODE_H }; }
 function topCenter(n) { return { x: n.x + NODE_W / 2, y: n.y }; }
 
@@ -168,7 +171,7 @@ function renderNodes() {
   layer.textContent = "";
   for (const n of graph.nodes) {
     const g = document.createElementNS(SVGNS, "g");
-    g.setAttribute("class", "node " + n.role + (selected === n.id ? " selected" : "") + (n.top ? " top" : ""));
+    g.setAttribute("class", "node " + nodeKind(n) + (selected === n.id ? " selected" : "") + (n.top ? " top" : ""));
     g.setAttribute("transform", `translate(${n.x},${n.y})`);
     g.dataset.id = n.id;
 
@@ -1176,7 +1179,8 @@ function renderResponse(resp) {
 function buildPalette() {
   const box = $("palette-buttons"); box.textContent = "";
   for (const spec of PALETTE[graph.kind]) {
-    const b = el("button", { class: "pal" }, "+ " + spec.label);
+    // Образец рядом с подписью: кнопка показывает, как узел будет выглядеть на холсте.
+    const b = el("button", { class: "pal pal-node" }, el("span", { class: "swatch " + nodeKind(spec.make()) }), spec.label);
     b.onclick = () => {
       const r = canvas.getBoundingClientRect();
       const c = screenToWorld(r.left + r.width / 2, r.top + r.height / 3);

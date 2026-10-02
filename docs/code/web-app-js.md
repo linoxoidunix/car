@@ -95,10 +95,15 @@ function render() {
 
 ```js
 const g = document.createElementNS(SVGNS, "g");
-g.setAttribute("class", "node " + n.role + (selected === n.id ? " selected" : "") + (n.top ? " top" : ""));
+g.setAttribute("class", "node " + nodeKind(n) + (selected === n.id ? " selected" : "") + (n.top ? " top" : ""));
 g.setAttribute("transform", `translate(${n.x},${n.y})`);
 g.dataset.id = n.id;
 ```
+
+`nodeKind(n)` возвращает роль, а для узла СФЦ без элемента (`dist: null`)
+добавляет класс `fictive`: фиктивный узел рисуется полым и пунктирным, реальный —
+сплошным (см. [`style.css`](web-style-css.md)). Та же функция даёт класс образцу
+на кнопке палитры, так что кнопка и узел на холсте выглядят одинаково.
 
 `createElementNS` с пространством имён SVG обязателен: `createElement("rect")`
 создал бы элемент HTML, который не отрисуется внутри `<svg>`.
