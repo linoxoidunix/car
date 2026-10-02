@@ -20,7 +20,7 @@ const $ = (id) => document.getElementById(id);
 // graph.options: настройки расчёта из открытого файла (нет — значения редактора)
 // ---------------------------------------------------------------------------
 let graph = { kind: "fault_tree", nodes: [], edges: [] };
-let selected = null;           // id выбранного узла
+let selNodes = new Set();      // id выбранных узлов (можно несколько)
 let selEdge = null;            // выбранная связь {parent, child} (или null)
 let seq = 0;                   // счётчик для новых id
 const view = { tx: 40, ty: 40, s: 1 }; // сдвиг и масштаб холста
@@ -201,7 +201,7 @@ function step(from, to, msg) {
   graph = JSON.parse(hist.cur);
   seq = graph.nodes.reduce((m, n) => Math.max(m, idNum(n.id)), 0);
   // Выделение остаётся, если выделенное есть и в восстановленной схеме.
-  if (selected && !nodeById(selected)) selected = null;
+  selNodes = new Set([...selNodes].filter((id) => nodeById(id)));
   if (selEdge && !edgeByPair(selEdge.parent, selEdge.child)) selEdge = null;
   $("kind").value = graph.kind;   // шаг мог отменить смену типа модели
   buildPalette(); renderInspector(); render(); renderHistory();
@@ -246,7 +246,7 @@ function renderNodes() {
   layer.textContent = "";
   for (const n of graph.nodes) {
     const g = document.createElementNS(SVGNS, "g");
-    g.setAttribute("class", "node " + nodeKind(n) + (selected === n.id ? " selected" : "") + (n.top ? " top" : ""));
+    g.setAttribute("class", "node " + nodeKind(n) + (selNodes.has(n.id) ? " selected" : "") + (n.top ? " top" : ""));
     g.setAttribute("transform", `translate(${n.x},${n.y})`);
     g.dataset.id = n.id;
 
@@ -380,10 +380,14 @@ function addNode(spec, wx, wy) {
   select(n.id);
   render();
 }
-function deleteNode(id) {
-  graph.nodes = graph.nodes.filter((n) => n.id !== id);
-  graph.edges = graph.edges.filter((e) => e.parent !== id && e.child !== id);
-  if (selected === id) select(null);
+// Удалить узлы вместе со всеми их связями — одной правкой, то есть одним
+// шагом истории, сколько бы узлов ни было.
+function deleteNodes(ids) {
+  const gone = new Set(ids);
+  graph.nodes = graph.nodes.filter((n) => !gone.has(n.id));
+  graph.edges = graph.edges.filter((e) => !gone.has(e.parent) && !gone.has(e.child));
+  selectNodes([...selNodes].filter((id) => !gone.has(id)));
+  if (gone.size > 1) setStatus(`удалено узлов: ${gone.size} (Ctrl+Z — вернуть)`, "ok");
   render();
 }
 function deleteEdge(parent, child) {
@@ -425,16 +429,23 @@ function edgeByPair(parent, child) {
   return graph.edges.find((x) => x.parent === parent && x.child === child);
 }
 
-function select(id) {
-  selected = id;
+function select(id) { selectNodes(id ? [id] : []); }
+function selectNodes(ids) {
+  selNodes = new Set(ids);
   selEdge = null;
   renderInspector();
   renderNodes();
   renderEdges();
 }
+// Ctrl/Shift+клик по узлу: добавить к выделению или убрать из него.
+function toggleNode(id) {
+  const s = new Set(selNodes);
+  if (!s.delete(id)) s.add(id);
+  selectNodes(s);
+}
 function selectEdge(parent, child) {
   selEdge = { parent, child };
-  selected = null;
+  selNodes = new Set();
   renderInspector();
   renderNodes();
   renderEdges();
@@ -460,9 +471,11 @@ canvas.addEventListener("mousedown", (ev) => {
   }
   if (nodeG) {
     const id = nodeG.dataset.id;
-    const n = nodeById(id);
-    const w = screenToWorld(ev.clientX, ev.clientY);
-    drag = { mode: "node", id, dx: w.x - n.x, dy: w.y - n.y, sx: ev.clientX, sy: ev.clientY, moved: false };
+    // Узел из выделения тащит за собой всю группу, невыделенный — только себя.
+    const ids = selNodes.has(id) ? [...selNodes] : [id];
+    drag = { mode: "node", id, w0: screenToWorld(ev.clientX, ev.clientY),
+      start: ids.map((k) => { const n = nodeById(k); return { n, x: n.x, y: n.y }; }),
+      toggle: ev.ctrlKey || ev.metaKey || ev.shiftKey, sx: ev.clientX, sy: ev.clientY, moved: false };
     nodeG.classList.add("dragging");
     ev.preventDefault();
     return;
@@ -475,8 +488,10 @@ canvas.addEventListener("mousedown", (ev) => {
     selectEdge(p, c);
     return;
   }
-  // Empty space: pan.
-  drag = { mode: "pan", sx: ev.clientX, sy: ev.clientY, tx: view.tx, ty: view.ty, moved: false };
+  // Empty space: pan. Промах мимо узла при Ctrl+клике не сбрасывает
+  // набранное выделение.
+  drag = { mode: "pan", sx: ev.clientX, sy: ev.clientY, tx: view.tx, ty: view.ty, moved: false,
+    keep: ev.ctrlKey || ev.metaKey };
 });
 
 window.addEventListener("mousemove", (ev) => {
@@ -491,8 +506,9 @@ window.addEventListener("mousemove", (ev) => {
     // по узлу в перемещение (и в шаг истории).
     if (!drag.moved && Math.abs(ev.clientX - drag.sx) + Math.abs(ev.clientY - drag.sy) <= 3) return;
     const w = screenToWorld(ev.clientX, ev.clientY);
-    const n = nodeById(drag.id);
-    n.x = w.x - drag.dx; n.y = w.y - drag.dy; drag.moved = true;
+    const dx = w.x - drag.w0.x, dy = w.y - drag.w0.y;
+    for (const p of drag.start) { p.n.x = p.x + dx; p.n.y = p.y + dy; }
+    drag.moved = true;
     render();
   } else if (drag.mode === "connect") {
     const w = screenToWorld(ev.clientX, ev.clientY);
@@ -523,10 +539,11 @@ window.addEventListener("mouseup", (ev) => {
     if (nodeG) addEdge(nodeG.dataset.id, d.from);
   } else if (d.mode === "node") {
     document.querySelectorAll(".node.dragging").forEach((e) => e.classList.remove("dragging"));
-    if (!d.moved) select(d.id);   // click without move = select
+    // Клик без движения выделяет узел, с Ctrl или Shift — добавляет или убирает.
+    if (!d.moved) { if (d.toggle) toggleNode(d.id); else select(d.id); }
     render();
   } else if (d.mode === "pan") {
-    if (!d.moved) select(null);   // click empty = deselect
+    if (!d.moved && !d.keep) select(null);   // click empty = deselect
   }
 });
 
@@ -542,12 +559,11 @@ canvas.addEventListener("wheel", (ev) => {
   render();
 }, { passive: false });
 
-canvas.addEventListener("keydown", (ev) => {
-  if (ev.key === "Delete" || ev.key === "Backspace") {
-    if (selected) { ev.preventDefault(); deleteNode(selected); }
-    else if (selEdge) { ev.preventDefault(); deleteEdge(selEdge.parent, selEdge.child); }
-  }
-});
+// Del: выделенные узлы (со связями) или выделенная дуга.
+function deleteSelection() {
+  if (selNodes.size) deleteNodes(selNodes);
+  else if (selEdge) deleteEdge(selEdge.parent, selEdge.child);
+}
 
 function fitView() {
   if (!graph.nodes.length) { view.tx = 40; view.ty = 40; view.s = 1; render(); return; }
@@ -571,7 +587,8 @@ function renderInspector() {
   const body = $("inspector-body");
   body.textContent = "";
   if (selEdge) { renderEdgeInspector(body); return; }
-  const n = selected ? nodeById(selected) : null;
+  if (selNodes.size > 1) { renderGroupInspector(body); return; }
+  const n = selNodes.size ? nodeById([...selNodes][0]) : null;
   if (!n) { body.innerHTML = '<p class="hint">Выберите узел или связь, чтобы задать параметры.</p>'; return; }
 
   body.appendChild(el("h3", {}, (n.role === "gate" ? "Логический элемент" : n.role === "sfc" ? "Узел СФЦ" : "Событие")));
@@ -582,7 +599,7 @@ function renderInspector() {
     if (!v || nodeById(v) && v !== n.id) { setStatus("id пустой или занят", "err"); return; }
     const old = n.id;
     for (const e of graph.edges) { if (e.parent === old) e.parent = v; if (e.child === old) e.child = v; }
-    n.id = v; if (selected === old) selected = v;
+    n.id = v; if (selNodes.delete(old)) selNodes.add(v);
     render();
   })));
 
@@ -617,8 +634,28 @@ function renderInspector() {
   }), graph.kind === "sfc" ? "Вершина (критерий)" : "Вершинное событие"));
 
   const del = el("button", { class: "del" }, "Удалить узел");
-  del.onclick = () => deleteNode(n.id);
+  del.onclick = () => deleteNodes([n.id]);
   body.appendChild(del);
+}
+
+// Выделено несколько узлов. Общих свойств у них нет, поэтому панель показывает
+// состав выделения и удаляет его целиком.
+const GROUP_CHIPS = 60;   // больше имён панель не перечисляет
+function renderGroupInspector(body) {
+  const ids = graph.nodes.filter((n) => selNodes.has(n.id)).map((n) => n.id);
+  const links = graph.edges.filter((e) => selNodes.has(e.parent) || selNodes.has(e.child)).length;
+  body.appendChild(el("h3", {}, "Выделено узлов: " + ids.length));
+  const chips = el("div", { class: "chips" });
+  for (const id of ids.slice(0, GROUP_CHIPS)) chips.append(el("span", {}, id));
+  if (ids.length > GROUP_CHIPS) chips.append(` … и ещё ${ids.length - GROUP_CHIPS}`);
+  body.appendChild(chips);
+  body.appendChild(el("p", { class: "meta" },
+    "Ctrl+клик или Shift+клик по узлу — добавить к выделению или убрать. " +
+    "Тянуть любой выделенный узел — двигать всю группу. Esc — снять выделение."));
+  const del = el("button", { class: "del" }, `Удалить выделенные (${ids.length})`);
+  del.onclick = () => deleteNodes(ids);
+  body.appendChild(del);
+  if (links) body.appendChild(el("p", { class: "meta" }, "Вместе с узлами удалятся и их связи: " + links + "."));
 }
 
 // Canonical СФЦ arc editor: kind (conjunctive/disjunctive) + output (direct/inverse).
@@ -1692,12 +1729,15 @@ $("mk-modal").addEventListener("mousedown", (e) => { if (e.target.id === "mk-mod
 document.addEventListener("keydown", (e) => {
   const mod = e.ctrlKey || e.metaKey;
   if (e.key === "Escape" && !$("mk-modal").classList.contains("hidden")) closeMarkov();
+  else if (e.key === "Escape" && editorKeyAllowed(e)) select(null);
   else if (mod && e.key === "Enter") analyze();
   // e.code — физическая клавиша: в русской раскладке e.key был бы «ы» / «щ».
   else if (mod && e.code === "KeyS") { e.preventDefault(); saveFile(); }
   else if (mod && e.code === "KeyO") { e.preventDefault(); $("file-input").click(); }
   else if (mod && e.code === "KeyZ" && editorKeyAllowed(e)) { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
   else if (mod && e.code === "KeyY" && editorKeyAllowed(e)) { e.preventDefault(); redo(); }
+  else if (mod && e.code === "KeyA" && editorKeyAllowed(e)) { e.preventDefault(); selectNodes(graph.nodes.map((n) => n.id)); }
+  else if ((e.key === "Delete" || e.key === "Backspace") && editorKeyAllowed(e)) { e.preventDefault(); deleteSelection(); }
   else if (ARC_KEYS[e.code] && arcKeyAllowed(e)) setArcStyle(ARC_KEYS[e.code]);
 });
 for (const b of document.querySelectorAll("[data-arc]")) {
