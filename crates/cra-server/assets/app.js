@@ -25,6 +25,9 @@ let selEdge = null;            // выбранная связь {parent, child} 
 let seq = 0;                   // счётчик для новых id
 const view = { tx: 40, ty: 40, s: 1 }; // сдвиг и масштаб холста
 const NODE_W = 132, NODE_H = 52;
+// Инструмент «Новая дуга» (СФЦ): с каким типом и выходом создаётся следующая
+// дуга. Это настройка редактора, а не схемы, — в документ не попадает.
+let arcStyle = { conj: false, inverse: false };
 
 // ---- схема параметров распределений (числовые поля) ----
 const DIST_SCHEMA = {
@@ -137,6 +140,19 @@ function load() {
   } catch (e) {}
 }
 function idNum(id) { const m = /(\d+)$/.exec(id); return m ? +m[1] : 0; }
+// Выбранный тип новой дуги хранится отдельно от схемы: он переживает
+// «Очистить», открытие файла и перезагрузку страницы.
+function loadArcStyle() {
+  try {
+    const s = JSON.parse(localStorage.getItem("cra.arc"));
+    if (s) arcStyle = { conj: !!s.conj, inverse: !!s.inverse };
+  } catch (e) {}
+}
+function setArcStyle(patch) {
+  Object.assign(arcStyle, patch);
+  try { localStorage.setItem("cra.arc", JSON.stringify(arcStyle)); } catch (e) {}
+  renderArcTool();
+}
 
 // ===========================================================================
 // Геометрия (перевод координат экрана в координаты холста и т.п.)
@@ -273,10 +289,8 @@ function renderEdges() {
     path.dataset.edge = hit.dataset.edge;
     layer.appendChild(path);
 
-    // Canonical СФЦ arc badge: & (conjunctive) / ≥1 (disjunctive), + ¬ if inverse.
     if (sfc) {
-      const badge = (e.conj ? "&" : "≥1") + (e.inverse ? " ¬" : "");
-      const mid = text((a.x + b.x) / 2, (a.y + b.y) / 2 - 3, badge, "edge-label" + (e.conj ? " conj" : " disj"));
+      const mid = text((a.x + b.x) / 2, (a.y + b.y) / 2 - 3, arcBadge(e), "edge-label" + (e.conj ? " conj" : " disj"));
       mid.setAttribute("text-anchor", "middle");
       layer.appendChild(mid);
     } else if (e.inverse) {
@@ -286,6 +300,9 @@ function renderEdges() {
     }
   }
 }
+// Canonical СФЦ arc badge: & (conjunctive) / ≥1 (disjunctive), + ¬ if inverse.
+// Takes a real edge or arcStyle (the badge on the arc being dragged).
+function arcBadge(a) { return (a.conj ? "&" : "≥1") + (a.inverse ? " ¬" : ""); }
 function edgePath(a, b) {
   // The control-point offset must grow with the horizontal gap too, not just
   // the vertical one — otherwise a wide, nearly-level edge keeps curving right
@@ -324,11 +341,16 @@ function addEdge(parent, child) {
   if (p.role === "gate" && p.op === "not" && childrenEdges(parent).length >= 1) {
     setStatus("НЕ принимает только один вход", "err"); return;
   }
-  // Canonical СФЦ default: disjunctive (ИЛИ) arc, direct output.
+  // СФЦ: тип и выход берём из инструмента «Новая дуга» (изначально —
+  // дизъюнктивная с прямым выходом, как в канонической СФЦ).
   const e = { parent, child };
-  if (graph.kind === "sfc") e.conj = false;
+  if (graph.kind === "sfc") applyArcStyle(e);
   graph.edges.push(e);
   render();
+}
+function applyArcStyle(e) {
+  e.conj = arcStyle.conj;
+  if (arcStyle.inverse) e.inverse = true; else delete e.inverse;
 }
 // does `from` reach `to` following parent->child?
 function reaches(from, to) {
@@ -389,7 +411,9 @@ canvas.addEventListener("mousedown", (ev) => {
   }
   if (edgeId) {
     // Click on an edge: select it (edit type/output in the inspector).
+    // Shift+click in СФЦ first gives it the type from «Новая дуга».
     const [p, c] = edgeId.split(">");
+    if (ev.shiftKey && graph.kind === "sfc") { applyArcStyle(edgeByPair(p, c)); save(); }
     selectEdge(p, c);
     return;
   }
@@ -413,10 +437,14 @@ window.addEventListener("mousemove", (ev) => {
     const w = screenToWorld(ev.clientX, ev.clientY);
     const tmp = $("temp-layer");
     tmp.textContent = "";
+    // В СФЦ тянущаяся дуга сразу показывает, какой она станет.
+    const sfc = graph.kind === "sfc";
+    const kindCls = sfc ? (arcStyle.conj ? " conj" : " disj") : "";
     const path = document.createElementNS(SVGNS, "path");
-    path.setAttribute("class", "temp-edge");
+    path.setAttribute("class", "temp-edge" + kindCls);
     path.setAttribute("d", edgePath(drag.start, w));
     tmp.appendChild(path);
+    if (sfc) tmp.appendChild(text(w.x + 10, w.y - 8, arcBadge(arcStyle), "edge-label" + kindCls));
   }
 });
 
@@ -1474,6 +1502,31 @@ function buildPalette() {
     };
     box.append(b);
   }
+  renderArcTool();
+}
+// Блок «Новая дуга» есть только у СФЦ: в дереве отказов тип входа задаёт
+// логический элемент, а не дуга. Кнопка с data-arc="conj:1" горит, когда
+// arcStyle.conj === true, и т. д.
+function renderArcTool() {
+  const box = $("arc-tool");
+  box.hidden = graph.kind !== "sfc";
+  for (const b of box.querySelectorAll("[data-arc]")) {
+    const [key, val] = b.dataset.arc.split(":");
+    const on = arcStyle[key] === (val === "1");
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-pressed", String(on));
+  }
+}
+// Клавиши 1–4 — те же четыре кнопки. e.code, чтобы работало в любой раскладке.
+const ARC_KEYS = {
+  Digit1: { conj: false }, Digit2: { conj: true }, Digit3: { inverse: false }, Digit4: { inverse: true },
+  Numpad1: { conj: false }, Numpad2: { conj: true }, Numpad3: { inverse: false }, Numpad4: { inverse: true },
+};
+function arcKeyAllowed(e) {
+  if (e.ctrlKey || e.metaKey || e.altKey || graph.kind !== "sfc") return false;
+  if (!$("tab-diagram").classList.contains("active") || !$("mk-modal").classList.contains("hidden")) return false;
+  // Цифра, набранная в поле ввода, — это ввод, а не команда.
+  return !(e.target.closest && e.target.closest("input, textarea, select, [contenteditable]"));
 }
 
 // Галочка «успех p у всех»: отмечена — постоянные вероятности схемы задаются
@@ -1572,10 +1625,18 @@ document.addEventListener("keydown", (e) => {
   // e.code — физическая клавиша: в русской раскладке e.key был бы «ы» / «щ».
   else if (mod && e.code === "KeyS") { e.preventDefault(); saveFile(); }
   else if (mod && e.code === "KeyO") { e.preventDefault(); $("file-input").click(); }
+  else if (ARC_KEYS[e.code] && arcKeyAllowed(e)) setArcStyle(ARC_KEYS[e.code]);
 });
+for (const b of document.querySelectorAll("[data-arc]")) {
+  b.addEventListener("click", () => {
+    const [key, val] = b.dataset.arc.split(":");
+    setArcStyle({ [key]: val === "1" });
+  });
+}
 
 // ---- init ----
 load();
+loadArcStyle();
 try { $("file-name").value = localStorage.getItem("cra.file") || ""; } catch (e) {}
 $("kind").value = graph.kind;
 buildPalette();
