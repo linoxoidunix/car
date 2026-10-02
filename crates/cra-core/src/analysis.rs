@@ -10,7 +10,10 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::bdd::Bdd;
-use crate::io::{Options, Request, Response, SetReport, SetsReport, Stats, TimeResult};
+use crate::io::{
+    BddModuleReport, BddNodeReport, BddReport, BddVarReport, Options, Request, Response, SetReport,
+    SetsReport, Stats, TimeResult,
+};
 use crate::model::{EventId, Formula, ModelKind, Node, NodeId, System};
 use crate::module::find_modules;
 
@@ -28,6 +31,8 @@ struct ModuleData {
     bdd_root: u32,
     /// Уровень BDD -> смысл переменной (событие или модуль).
     vars: Vec<LocalVar>,
+    /// Узел формулы, чья функция этот модуль (по нему модуль получает имя).
+    root: NodeId,
 }
 
 /// Все модули схемы. Порядок такой, что дети идут раньше родителей.
@@ -87,7 +92,7 @@ fn process_module(
     let mut memo: HashMap<NodeId, u32> = HashMap::new();
     let bdd_root = translate(f, root, &node_level, &mut bdd, &mut memo);
     let idx = mods.len();
-    mods.push(ModuleData { bdd, bdd_root, vars });
+    mods.push(ModuleData { bdd, bdd_root, vars, root });
     done.insert(root, idx);
     idx
 }
@@ -156,17 +161,103 @@ fn module_probs(c: &Compiled, p_event: &[f64]) -> Vec<f64> {
     let mut out = vec![0.0f64; c.mods.len()];
     for i in 0..c.mods.len() {
         let m = &c.mods[i];
-        let vp: Vec<f64> = m
-            .vars
-            .iter()
-            .map(|v| match v {
-                LocalVar::Event(e) => p_event[*e],
-                LocalVar::Module(j) => out[*j],
-            })
-            .collect();
+        let vp = var_probs(m, p_event, &out);
         out[i] = m.bdd.prob(m.bdd_root, &vp);
     }
     out
+}
+
+/// P(переменная истинна) по уровням BDD модуля: событие или вложенный модуль.
+fn var_probs(m: &ModuleData, p_event: &[f64], mod_p: &[f64]) -> Vec<f64> {
+    m.vars
+        .iter()
+        .map(|v| match v {
+            LocalVar::Event(e) => p_event[*e],
+            LocalVar::Module(j) => mod_p[*j],
+        })
+        .collect()
+}
+
+// --- ROBDD наружу (options.bdd) ---------------------------------------------
+
+/// ROBDD каждого модуля для рисования: только достижимые из корня узлы, у
+/// каждого — вероятность его подфункции в первый момент времени.
+///
+/// Узлов всего не больше `limit`. Бюджет раздаётся от вершины вниз (модули
+/// построены детьми вперёд, поэтому идём с конца): вершина важнее вложенных
+/// модулей. Модуль, который не влез, выдаётся без узлов, но с размером.
+fn bdd_report(c: &Compiled, sys: &System, p_event: &[f64], limit: usize) -> BddReport {
+    let mod_p = module_probs(c, p_event);
+    let mut budget = limit;
+    let mut truncated = false;
+    let mut modules: Vec<Option<BddModuleReport>> = (0..c.mods.len()).map(|_| None).collect();
+    for i in (0..c.mods.len()).rev() {
+        let m = &c.mods[i];
+        let vp = var_probs(m, p_event, &mod_p);
+        let (root, nodes) = m.bdd.export(m.bdd_root);
+        let size = nodes.len();
+        let nodes = if size <= budget {
+            budget -= size;
+            // Шеннон, как в Bdd::prob: P(u) = p·P(hi) + (1−p)·P(lo). Дети стоят
+            // в списке после родителей, поэтому считаем с конца.
+            let mut pn = vec![0.0f64; size];
+            for k in (0..size).rev() {
+                let n = nodes[k];
+                let pv = vp[n.var as usize];
+                pn[k] = pv * branch_prob(n.hi, &pn) + (1.0 - pv) * branch_prob(n.lo, &pn);
+            }
+            nodes
+                .iter()
+                .zip(&pn)
+                .enumerate()
+                .map(|(k, (n, &p))| BddNodeReport {
+                    id: k as u32 + 2,
+                    var: n.var,
+                    lo: n.lo,
+                    hi: n.hi,
+                    probability: p,
+                })
+                .collect()
+        } else {
+            truncated = true;
+            Vec::new()
+        };
+        let vars = m
+            .vars
+            .iter()
+            .zip(&vp)
+            .map(|(v, &p)| match v {
+                LocalVar::Event(e) => BddVarReport {
+                    event: Some(sys.events[*e].name.clone()),
+                    module: None,
+                    probability: p,
+                },
+                LocalVar::Module(j) => BddVarReport { event: None, module: Some(*j), probability: p },
+            })
+            .collect();
+        modules[i] = Some(BddModuleReport {
+            name: sys.labels.get(&m.root).cloned(),
+            vars,
+            root,
+            size,
+            nodes,
+            probability: mod_p[i],
+        });
+    }
+    BddReport {
+        top: c.top,
+        modules: modules.into_iter().map(|m| m.expect("every module reported")).collect(),
+        truncated,
+    }
+}
+
+/// Вероятность ветки: листья FALSE/TRUE или уже посчитанный узел (id >= 2).
+fn branch_prob(u: u32, pn: &[f64]) -> f64 {
+    match u {
+        crate::bdd::FALSE => 0.0,
+        crate::bdd::TRUE => 1.0,
+        _ => pn[u as usize - 2],
+    }
 }
 
 // --- свёртка минимальных наборов --------------------------------------------
@@ -194,14 +285,7 @@ fn expand(ctx: &mut ExpandCtx, m: usize) -> Rc<Vec<(Vec<EventId>, f64)>> {
     }
     let c = ctx.c;
     let md = &c.mods[m];
-    let vp: Vec<f64> = md
-        .vars
-        .iter()
-        .map(|v| match v {
-            LocalVar::Event(e) => ctx.lit_p[*e],
-            LocalVar::Module(j) => ctx.mod_p[*j],
-        })
-        .collect();
+    let vp = var_probs(md, ctx.lit_p, &ctx.mod_p);
     let (local, trunc) = md
         .bdd
         .minsol(md.bdd_root, &vp, ctx.max_order, ctx.max_sets, ctx.cutoff);
@@ -407,6 +491,15 @@ pub fn analyze_system(sys: &System, req: &Request) -> Result<Response, String> {
         }
     }
 
+    // ROBDD тех же модулей, что дали top_probability; вероятности — для t[0].
+    let bdd = opts.bdd.then(|| bdd_report(&compiled, sys, p0, opts.bdd_max_nodes));
+    if bdd.as_ref().is_some_and(|b| b.truncated) {
+        warnings.push(format!(
+            "ROBDD exceeds bdd_max_nodes = {}: some modules are returned without nodes",
+            opts.bdd_max_nodes
+        ));
+    }
+
     Ok(Response {
         interpretation: match sys.kind {
             ModelKind::FaultTree => "P(top event / failure)".to_string(),
@@ -415,6 +508,7 @@ pub fn analyze_system(sys: &System, req: &Request) -> Result<Response, String> {
         results,
         cut_sets,
         path_sets,
+        bdd,
         stats: Stats {
             events: sys.events.len(),
             formula_nodes: sys.formula.nodes.len(),

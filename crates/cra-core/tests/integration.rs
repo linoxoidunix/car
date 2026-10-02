@@ -355,3 +355,168 @@ fn editor_layout_field_is_ignored() {
     let r = run(json);
     assert!((r.results[0].top_probability - 0.891).abs() < 1e-15);
 }
+
+// --- ROBDD в ответе (options.bdd) -------------------------------------------
+
+/// Walk an exported BDD for one assignment of its variables (by level).
+fn eval_bdd(m: &cra::io::BddModuleReport, value: impl Fn(usize) -> bool) -> bool {
+    let mut u = m.root;
+    while u > 1 {
+        let n = &m.nodes[u as usize - 2];
+        assert_eq!(n.id, u, "node ids are dense: nodes[i].id == i + 2");
+        u = if value(n.var as usize) { n.hi } else { n.lo };
+    }
+    u == 1
+}
+
+/// The bridge has no modules besides the top (every event is shared), so the
+/// whole structure function is one ROBDD. It must agree with the cut-set form
+/// on all 32 assignments, and its root probability must be the top probability.
+#[test]
+fn bdd_export_matches_structure_function() {
+    let json = r#"{
+      "model": {
+        "type": "fault_tree",
+        "top": "top",
+        "events": [
+          {"id": "e1", "dist": {"type": "fixed", "q": 0.1}},
+          {"id": "e2", "dist": {"type": "fixed", "q": 0.2}},
+          {"id": "e3", "dist": {"type": "fixed", "q": 0.3}},
+          {"id": "e4", "dist": {"type": "fixed", "q": 0.4}},
+          {"id": "e5", "dist": {"type": "fixed", "q": 0.5}}
+        ],
+        "gates": [
+          {"id": "c1", "op": "and", "inputs": ["e1", "e2"]},
+          {"id": "c2", "op": "and", "inputs": ["e4", "e5"]},
+          {"id": "c3", "op": "and", "inputs": ["e1", "e3", "e5"]},
+          {"id": "c4", "op": "and", "inputs": ["e2", "e3", "e4"]},
+          {"id": "top", "op": "or", "inputs": ["c1", "c2", "c3", "c4"]}
+        ]
+      },
+      "options": {"bdd": true}
+    }"#;
+    let r = run(json);
+    let b = r.bdd.expect("bdd requested");
+    assert!(!b.truncated);
+    assert_eq!(b.modules.len(), 1);
+    let m = &b.modules[b.top];
+    assert_eq!(m.name.as_deref(), Some("top"));
+    assert_eq!(m.size, m.nodes.len());
+    assert!((m.probability - r.results[0].top_probability).abs() < 1e-15);
+    assert!((m.nodes[0].probability - m.probability).abs() < 1e-15, "root node comes first");
+
+    // Level -> event index (e1 = 0 ... e5 = 4).
+    let ev: Vec<usize> = m
+        .vars
+        .iter()
+        .map(|v| v.event.as_deref().expect("only events")[1..].parse::<usize>().unwrap() - 1)
+        .collect();
+    for bits in 0u32..32 {
+        let x = |e: usize| bits >> e & 1 == 1;
+        let expect = (x(0) && x(1)) || (x(3) && x(4)) || (x(0) && x(2) && x(4)) || (x(1) && x(2) && x(3));
+        assert_eq!(eval_bdd(m, |lvl| x(ev[lvl])), expect, "assignment {bits:05b}");
+    }
+    // ROBDD: no redundant node (lo == hi) and no duplicate (var, lo, hi).
+    let mut seen = std::collections::HashSet::new();
+    for n in &m.nodes {
+        assert_ne!(n.lo, n.hi);
+        assert!(seen.insert((n.var, n.lo, n.hi)));
+    }
+}
+
+/// Modules are named after their gates, and a nested module is one variable
+/// of its parent's BDD, pointing at the nested module's entry.
+#[test]
+fn bdd_export_names_and_links_modules() {
+    let json = r#"{
+      "model": {
+        "type": "fault_tree",
+        "top": "top",
+        "events": [
+          {"id": "a", "dist": {"type": "fixed", "q": 0.2}},
+          {"id": "b", "dist": {"type": "fixed", "q": 0.3}},
+          {"id": "c", "dist": {"type": "fixed", "q": 0.1}}
+        ],
+        "gates": [
+          {"id": "m1", "op": "and", "inputs": ["a", "b"]},
+          {"id": "top", "op": "or", "inputs": ["m1", "c"]}
+        ]
+      },
+      "options": {"bdd": true}
+    }"#;
+    let r = run(json);
+    let b = r.bdd.expect("bdd requested");
+    assert_eq!(b.modules.len(), 2);
+    let top = &b.modules[b.top];
+    assert_eq!(top.name.as_deref(), Some("top"));
+    let nested = top.vars.iter().find_map(|v| v.module).expect("top uses module m1");
+    let m1 = &b.modules[nested];
+    assert_eq!(m1.name.as_deref(), Some("m1"));
+    assert!(nested < b.top, "nested modules come first");
+    assert!((m1.probability - 0.06).abs() < 1e-15);
+    // The module variable carries the module probability.
+    let v = top.vars.iter().find(|v| v.module == Some(nested)).unwrap();
+    assert!((v.probability - 0.06).abs() < 1e-15);
+    assert!((top.probability - (1.0 - 0.94 * 0.9)).abs() < 1e-15);
+    // Default: no BDD in the response at all.
+    let plain = run(&json.replace(r#""options": {"bdd": true}"#, r#""options": {}"#));
+    assert!(plain.bdd.is_none());
+}
+
+/// СФЦ: a variable is "the element works", P = 1 - q.
+#[test]
+fn bdd_export_sfc_variables_are_success() {
+    let json = r#"{
+      "model": {
+        "type": "sfc",
+        "nodes": [
+          {"id": "n1", "dist": {"type": "fixed", "q": 0.1}},
+          {"id": "n2", "dist": {"type": "fixed", "q": 0.2}},
+          {"id": "n3", "dist": {"type": "fixed", "q": 0.3},
+           "inputs": [{"from": "n1"}, {"from": "n2"}]}
+        ],
+        "criterion": {"target": "n3"}
+      },
+      "options": {"bdd": true}
+    }"#;
+    let r = run(json);
+    let b = r.bdd.expect("bdd requested");
+    let top = &b.modules[b.top];
+    assert!((top.probability - r.results[0].top_probability).abs() < 1e-15);
+    for v in b.modules.iter().flat_map(|m| &m.vars) {
+        if let Some(e) = &v.event {
+            let q = match e.as_str() { "n1" => 0.1, "n2" => 0.2, _ => 0.3 };
+            assert!((v.probability - (1.0 - q)).abs() < 1e-15, "{e}");
+        }
+    }
+}
+
+/// Node budget: the top module is served first; what does not fit comes
+/// without nodes (but with its size), and a warning says so.
+#[test]
+fn bdd_export_respects_node_limit() {
+    let json = r#"{
+      "model": {
+        "type": "fault_tree",
+        "top": "top",
+        "events": [
+          {"id": "a", "dist": {"type": "fixed", "q": 0.2}},
+          {"id": "b", "dist": {"type": "fixed", "q": 0.3}},
+          {"id": "c", "dist": {"type": "fixed", "q": 0.1}}
+        ],
+        "gates": [
+          {"id": "m1", "op": "and", "inputs": ["a", "b"]},
+          {"id": "top", "op": "or", "inputs": ["m1", "c"]}
+        ]
+      },
+      "options": {"bdd": true, "bdd_max_nodes": 2}
+    }"#;
+    let r = run(json);
+    let b = r.bdd.expect("bdd requested");
+    assert!(b.truncated);
+    let top = &b.modules[b.top];
+    assert_eq!((top.size, top.nodes.len()), (2, 2));
+    let m1 = b.modules.iter().find(|m| m.name.as_deref() == Some("m1")).unwrap();
+    assert_eq!((m1.size, m1.nodes.len()), (2, 0));
+    assert!(r.warnings.iter().any(|w| w.contains("bdd_max_nodes")));
+}

@@ -239,6 +239,11 @@ pub struct Options {
     pub max_sets: usize,
     /// Discard sets with probability below this value (0 = keep all).
     pub cutoff: f64,
+    /// Return the ROBDD of every module (for drawing it).
+    pub bdd: bool,
+    /// Maximum ROBDD nodes returned, summed over modules; a module that does
+    /// not fit comes without its nodes.
+    pub bdd_max_nodes: usize,
 }
 
 impl Default for Options {
@@ -249,6 +254,8 @@ impl Default for Options {
             max_order: 8,
             max_sets: 20_000,
             cutoff: 0.0,
+            bdd: false,
+            bdd_max_nodes: 2_000,
         }
     }
 }
@@ -268,6 +275,9 @@ pub struct Response {
     pub cut_sets: Option<SetsReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path_sets: Option<SetsReport>,
+    /// Only with `options.bdd`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bdd: Option<BddReport>,
     pub stats: Stats,
     pub warnings: Vec<String>,
 }
@@ -294,6 +304,58 @@ pub struct SetReport {
     pub events: Vec<String>,
     pub order: usize,
     /// Probability of the set at the first evaluation time.
+    pub probability: f64,
+}
+
+/// ROBDD модулей — ровно те диаграммы, по которым считалась вероятность.
+#[derive(Debug, Serialize)]
+pub struct BddReport {
+    /// Index of the top module in `modules`.
+    pub top: usize,
+    /// Nested modules come before the modules that use them.
+    pub modules: Vec<BddModuleReport>,
+    /// Some modules did not fit into `bdd_max_nodes` and have no `nodes`.
+    pub truncated: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BddModuleReport {
+    /// Gate / SFC node whose function the module is; absent for internal nodes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Variables by BDD level, top to bottom: a basic event or a nested module.
+    pub vars: Vec<BddVarReport>,
+    /// Root: 0 = FALSE, 1 = TRUE, otherwise a node id.
+    pub root: u32,
+    /// Number of nodes reachable from the root (terminals not counted).
+    pub size: usize,
+    /// Nodes with ids 2, 3, ... ordered top to bottom; empty if over the limit.
+    pub nodes: Vec<BddNodeReport>,
+    /// P(module function is true) at the first evaluation time.
+    pub probability: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BddVarReport {
+    /// Basic event name...
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event: Option<String>,
+    /// ...or index of a nested module in `modules`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module: Option<usize>,
+    /// P(variable is true) at the first evaluation time.
+    pub probability: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BddNodeReport {
+    pub id: u32,
+    /// Level, i.e. index into `vars`.
+    pub var: u32,
+    /// Branch taken when the variable is false (`lo`) / true (`hi`).
+    pub lo: u32,
+    pub hi: u32,
+    /// P(the sub-function rooted here is true) at the first evaluation time.
     pub probability: f64,
 }
 
@@ -499,7 +561,8 @@ fn compile_fault_tree(ft: &FaultTreeInput) -> Result<System, String> {
         &mut in_progress,
     )?;
     formula.root = root;
-    Ok(System { kind: ModelKind::FaultTree, events, formula })
+    let labels = name_nodes(resolved);
+    Ok(System { kind: ModelKind::FaultTree, events, formula, labels })
 }
 
 /// Найти (по имени) узел для события или элемента и построить его поддерево.
@@ -613,7 +676,27 @@ fn compile_sfc(sfc: &SfcInput) -> Result<System, String> {
         &mut in_progress,
     )?;
     formula.root = root;
-    Ok(System { kind: ModelKind::Sfc, events, formula })
+    let labels = name_nodes(outputs);
+    Ok(System { kind: ModelKind::Sfc, events, formula, labels })
+}
+
+/// Перевернуть «имя -> узел формулы» в «узел -> имя». Узел СФЦ без своего
+/// элемента и с одним прямым входом не строит нового узла, а берёт функцию
+/// источника, — тогда у узла формулы два имени, их пишем через запятую.
+fn name_nodes(by_name: HashMap<String, NodeId>) -> HashMap<NodeId, String> {
+    let mut named: Vec<(String, NodeId)> = by_name.into_iter().collect();
+    named.sort();
+    let mut labels: HashMap<NodeId, String> = HashMap::new();
+    for (name, node) in named {
+        labels
+            .entry(node)
+            .and_modify(|l| {
+                l.push_str(", ");
+                l.push_str(&name);
+            })
+            .or_insert(name);
+    }
+    labels
 }
 
 /// Output function of an SFC node: y = x AND combine(inputs), where x is the
