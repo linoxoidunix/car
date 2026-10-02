@@ -1102,6 +1102,77 @@ function parseTimes(s) {
 }
 
 // ===========================================================================
+// Документ: схема ⇄ JSON (то, что сохраняется в файл и видно во вкладке JSON)
+// ===========================================================================
+// Документ — это обычный запрос на расчёт плюс поле `layout` с координатами.
+// Движок `layout` не читает (serde пропускает незнакомые поля), поэтому один и
+// тот же файл открывается в редакторе и считается из командной строки:
+// `cra схема.json`.
+function graphToDocument() {
+  const { req, errs } = graphToRequest();
+  req.layout = graphLayout();
+  return { doc: req, errs };
+}
+function graphLayout() {
+  const xy = (p) => ({ x: Math.round(p.x), y: Math.round(p.y) });
+  const nodes = {}, markov = {};
+  for (const n of graph.nodes) {
+    nodes[n.id] = xy(n);
+    if (n.dist && n.dist.type === "markov" && n.dist._pos) {
+      const st = {};
+      for (const [s, p] of Object.entries(n.dist._pos)) st[s] = xy(p);
+      markov[n.id] = st;
+    }
+  }
+  const layout = { nodes };
+  if (Object.keys(markov).length) layout.markov = markov;
+  return layout;
+}
+
+// ===========================================================================
+// Файлы: сохранить на диск
+// ===========================================================================
+// Вкладка JSON показывает документ текущей схемы, пока его не правили руками.
+let jsonEdited = false;
+function setJsonText(doc) { $("input").value = JSON.stringify(doc, null, 2); jsonEdited = false; }
+
+function setFileName(name) {
+  $("file-name").value = name;
+  try { localStorage.setItem("cra.file", name); } catch (e) {}
+}
+
+// Сохраняется то, что видно: на вкладке «Схема» — документ схемы, на вкладке
+// JSON — текст как есть (лишь проверяем, что это JSON).
+function saveFile() {
+  let text, note = "";
+  if ($("tab-json").classList.contains("active")) {
+    text = $("input").value;
+    try { JSON.parse(text); } catch (e) { setStatus("некорректный JSON: " + e.message, "err"); return; }
+  } else {
+    if (!graph.nodes.length) { setStatus("схема пуста — сохранять нечего", "err"); return; }
+    const { doc, errs } = graphToDocument();
+    if (errs.length) note = " (схема неполна)";
+    text = JSON.stringify(doc, null, 2) + "\n";
+  }
+  let name = $("file-name").value.trim() || (graph.kind === "sfc" ? "sfc" : "fault-tree");
+  if (!/\.json$/i.test(name)) name += ".json";
+  setFileName(name);
+  downloadText(name, text);
+  setStatus("сохранено: " + name + note, note ? "err" : "ok");
+}
+
+// Страница не может сама писать на диск: файл отдаётся как загрузка, а куда
+// его положить (папка загрузок или диалог «Сохранить как»), решает браузер.
+function downloadText(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  const a = el("a", { href: url, download: name });
+  document.body.append(a);   // Firefox нажимает только ссылки, стоящие в документе
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ===========================================================================
 // Запуск расчёта (Analyze)
 // ===========================================================================
 function setStatus(msg, kind) { const e = $("status"); e.textContent = msg; e.className = "status" + (kind ? " " + kind : ""); }
@@ -1115,7 +1186,7 @@ async function analyze() {
     const { req, errs } = graphToRequest();
     if (errs.length) { showError("Схема неполна:\n• " + errs.join("\n• ")); setStatus("исправьте схему", "err"); return; }
     payload = req;
-    $("input").value = JSON.stringify(req, null, 2);   // keep JSON tab in sync
+    setJsonText(graphToDocument().doc);   // keep JSON tab in sync
   }
   openDrawer();
   setStatus("расчёт…");
@@ -1199,6 +1270,7 @@ function renderProbAll() {
 }
 
 function switchTab(name) {
+  if (name === "json" && !jsonEdited && graph.nodes.length) setJsonText(graphToDocument().doc);
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   $("tab-diagram").classList.toggle("active", name === "diagram");
   $("tab-json").classList.toggle("active", name === "json");
@@ -1261,7 +1333,12 @@ $("kind").addEventListener("change", () => {
 });
 $("analyze").addEventListener("click", analyze);
 $("fit").addEventListener("click", fitView);
-$("clear").addEventListener("click", () => { if (confirm("Очистить схему?")) { graph = { kind: graph.kind, prob: graph.prob, nodes: [], edges: [] }; seq = 0; select(null); render(); } });
+$("clear").addEventListener("click", () => {
+  if (!confirm("Очистить схему?")) return;
+  graph = { kind: graph.kind, prob: graph.prob, nodes: [], edges: [] }; seq = 0;
+  $("input").value = ""; jsonEdited = false; setFileName("");
+  select(null); render();
+});
 // Привести все узлы к одному виду вероятности; новые узлы тоже получат его.
 $("prob-all").addEventListener("change", () => {
   graph.prob = $("prob-all").checked ? "p" : "q";
@@ -1271,10 +1348,13 @@ $("prob-all").addEventListener("change", () => {
 $("example-ft").addEventListener("click", () => loadExample("fault_tree", "fault_tree"));
 $("example-sfc").addEventListener("click", () => loadExample("sfc", "sfc_bridge"));
 $("from-diagram").addEventListener("click", () => {
-  const { req, errs } = graphToRequest();
-  $("input").value = JSON.stringify(req, null, 2);
+  const { doc, errs } = graphToDocument();
+  setJsonText(doc);
   if (errs.length) setStatus("схема неполна, JSON частичный", "err"); else setStatus("JSON построен", "ok");
 });
+$("input").addEventListener("input", () => { jsonEdited = true; });
+$("save").addEventListener("click", saveFile);
+$("file-name").addEventListener("change", () => setFileName($("file-name").value.trim()));
 $("format").addEventListener("click", () => {
   try { $("input").value = JSON.stringify(JSON.parse($("input").value), null, 2); setStatus("отформатировано", "ok"); }
   catch (e) { setStatus("некорректный JSON", "err"); }
@@ -1298,12 +1378,16 @@ $("mk-chart-svg").addEventListener("mousemove", mkChartHover);
 $("mk-chart-svg").addEventListener("mouseleave", mkChartHoverClear);
 $("mk-modal").addEventListener("mousedown", (e) => { if (e.target.id === "mk-modal") closeMarkov(); });
 document.addEventListener("keydown", (e) => {
+  const mod = e.ctrlKey || e.metaKey;
   if (e.key === "Escape" && !$("mk-modal").classList.contains("hidden")) closeMarkov();
-  else if ((e.ctrlKey || e.metaKey) && e.key === "Enter") analyze();
+  else if (mod && e.key === "Enter") analyze();
+  // e.code — физическая клавиша: в русской раскладке e.key был бы «ы».
+  else if (mod && e.code === "KeyS") { e.preventDefault(); saveFile(); }
 });
 
 // ---- init ----
 load();
+try { $("file-name").value = localStorage.getItem("cra.file") || ""; } catch (e) {}
 $("kind").value = graph.kind;
 buildPalette();
 render();

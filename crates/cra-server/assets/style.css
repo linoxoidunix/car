@@ -74,6 +74,10 @@ header .sub { color: var(--muted); font-size: 12px; }
   padding: 4px 14px; border-radius: 999px; cursor: pointer; font: inherit; font-weight: 500;
 }
 .tabs .tab.active { background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent-soft); }
+.file { display: flex; align-items: center; gap: 6px; }
+.file input[type=text] { width: 170px; font-family: var(--mono); font-size: 12px; }
+/* The file controls need the room on ordinary 1280-px screens. */
+@media (max-width: 1480px) { header .sub { display: none; } }
 .run { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 label { color: var(--muted); font-size: 12px; }
 select, input, button {
