@@ -19,9 +19,11 @@
       <button class="tab" data-tab="json">JSON</button>
     </nav>
     <div class="file">
+      <button id="open" type="button" class="secondary" title="Открыть схему из файла JSON (Ctrl+O)">Открыть…</button>
       <input id="file-name" type="text" size="16" placeholder="имя файла" spellcheck="false"
              title="Имя файла, под которым схема будет сохранена">
       <button id="save" type="button" class="secondary" title="Сохранить схему в файл JSON (Ctrl+S)">Сохранить</button>
+      <input id="file-input" type="file" accept=".json,application/json" hidden>
     </div>
     <div class="run">
       <label for="kind">Модель:</label>
@@ -97,8 +99,9 @@
     <div class="json-pane">
       <div class="toolbar">
         <button id="from-diagram" type="button" class="secondary">◀ Из схемы</button>
+        <button id="to-diagram" type="button" class="secondary">В схему ▶</button>
         <button id="format" type="button" class="secondary">Форматировать</button>
-        <span class="hint">Здесь можно отредактировать запрос вручную.</span>
+        <span class="hint">Запрос можно править вручную; «В схему ▶» перерисует диаграмму по этому JSON.</span>
       </div>
       <textarea id="input" spellcheck="false" placeholder="JSON-запрос…"></textarea>
     </div>

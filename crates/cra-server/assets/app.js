@@ -17,6 +17,7 @@ const $ = (id) => document.getElementById(id);
 // graph.edges: { parent, child, inverse?, conj? }
 //   смысл: `child` — это ВХОД для `parent` (ребёнок питает родителя).
 //   рисуем: линия от нижнего порта ребёнка (источника) вниз к родителю.
+// graph.options: настройки расчёта из открытого файла (нет — значения редактора)
 // ---------------------------------------------------------------------------
 let graph = { kind: "fault_tree", nodes: [], edges: [] };
 let selected = null;           // id выбранного узла
@@ -1075,7 +1076,7 @@ function graphToRequest() {
   }
 
   const times = parseTimes($("mtime").value);
-  const req = { model, options: { cut_sets: true, path_sets: true, max_order: 8 } };
+  const req = { model, options: graph.options || { cut_sets: true, path_sets: true, max_order: 8 } };
   if (times.length > 1) req.times = times; else req.mission_time = times[0] || 0;
   return { req, errs };
 }
@@ -1129,8 +1130,200 @@ function graphLayout() {
   return layout;
 }
 
+// Обратное преобразование: документ -> редактируемый граф. Структурные ошибки
+// (не тот тип модели, повтор id, неизвестное распределение) бросают Error —
+// такой граф редактор показать не сможет. Мелочи, которые можно поправить
+// мышью, собираются в `warns`. Если координат в файле нет, схема
+// раскладывается автоматически (`autoLayout`).
+function documentToGraph(doc) {
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) throw new Error("ожидается JSON-объект");
+  // Принимаем и голую модель — без обёртки запроса.
+  const req = doc.model ? doc : doc.type ? { model: doc } : null;
+  if (!req) throw new Error("нет поля «model»");
+  const m = req.model;
+  if (m.type !== "fault_tree" && m.type !== "sfc") {
+    throw new Error(`неизвестный тип модели «${m.type}» (ожидается fault_tree или sfc)`);
+  }
+  const g = { kind: m.type, nodes: [], edges: [] };
+  if (req.options && typeof req.options === "object") g.options = req.options;
+  const warns = [];
+
+  const list = (v, what) => {
+    if (v == null) return [];
+    if (!Array.isArray(v)) throw new Error(`«${what}» должно быть массивом`);
+    return v;
+  };
+  const ids = new Set();
+  const push = (n) => {
+    if (typeof n.id !== "string" || !n.id) throw new Error("у узла нет строкового id");
+    if (ids.has(n.id)) throw new Error(`повторяющийся идентификатор «${n.id}»`);
+    ids.add(n.id);
+    g.nodes.push(n);
+    return n;
+  };
+  const dist = (id, d) => {
+    if (!d || typeof d !== "object" || !DIST_NAMES[d.type]) {
+      throw new Error(`узел «${id}»: неизвестное распределение «${d && d.type}»`);
+    }
+    return d;
+  };
+
+  let top = null;
+  if (m.type === "fault_tree") {
+    for (const e of list(m.events, "events")) push({ id: e.id, role: "event", dist: dist(e.id, e.dist) });
+    const gates = list(m.gates, "gates");
+    for (const gt of gates) {
+      if (!OP_LABEL[gt.op]) throw new Error(`элемент «${gt.id}»: неизвестная операция «${gt.op}»`);
+      const n = push({ id: gt.id, role: "gate", op: gt.op });
+      if (gt.k != null) n.k = gt.k;
+    }
+    for (const gt of gates) {
+      for (const inp of list(gt.inputs, gt.id + ".inputs")) g.edges.push({ parent: gt.id, child: inp });
+    }
+    top = m.top;
+  } else {
+    const nodes = list(m.nodes, "nodes");
+    for (const nd of nodes) push({ id: nd.id, role: "sfc", dist: nd.dist ? dist(nd.id, nd.dist) : null });
+    for (const nd of nodes) {
+      // Per-arc kind; legacy files fall back to the node's `combine` default.
+      const defaultConj = (nd.combine || "or") === "and";
+      for (const inp of list(nd.inputs, nd.id + ".inputs")) {
+        const e = { parent: nd.id, child: inp.from, conj: inp.conjunctive != null ? !!inp.conjunctive : defaultConj };
+        if (inp.inverse) e.inverse = true;
+        g.edges.push(e);
+      }
+    }
+    const c = m.criterion;
+    top = c && (c.target || c.node);
+    if (c && !top) warns.push("составной критерий (op/args) редактор не показывает — отметьте вершину вручную");
+  }
+
+  // Связи, которые редактор не сможет ни показать, ни удалить, отбрасываем.
+  const seen = new Set();
+  g.edges = g.edges.filter((e) => {
+    const key = e.parent + ">" + e.child;
+    if (!ids.has(e.child)) { warns.push(`«${e.parent}»: вход «${e.child}» не найден — связь отброшена`); return false; }
+    if (seen.has(key)) { warns.push(`«${e.parent}»: вход «${e.child}» указан дважды — повтор отброшен`); return false; }
+    seen.add(key);
+    return true;
+  });
+  if (top) {
+    const n = g.nodes.find((x) => x.id === top);
+    if (n) n.top = true; else warns.push(`вершина «${top}» не найдена`);
+  }
+
+  // Координаты: из `layout`, а для узлов без них — авто-раскладка, сдвинутая
+  // вправо от уже расставленных, чтобы новые узлы не легли поверх старых.
+  const lay = req.layout && typeof req.layout === "object" ? req.layout : {};
+  const saved = lay.nodes || {};
+  const ok = (p) => p && Number.isFinite(p.x) && Number.isFinite(p.y);
+  const auto = autoLayout(g.nodes, g.edges);
+  let shift = 0;
+  if (g.nodes.some((n) => ok(saved[n.id]))) {
+    let right = -Infinity, left = Infinity;
+    for (const n of g.nodes) {
+      if (ok(saved[n.id])) right = Math.max(right, saved[n.id].x + NODE_W);
+      else left = Math.min(left, auto.get(n.id).x);
+    }
+    if (left < Infinity) shift = right + 80 - left;
+  }
+  for (const n of g.nodes) {
+    const p = ok(saved[n.id]) ? saved[n.id] : { x: auto.get(n.id).x + shift, y: auto.get(n.id).y };
+    n.x = p.x; n.y = p.y;
+    const mk = lay.markov && lay.markov[n.id];
+    if (n.dist && n.dist.type === "markov" && mk && typeof mk === "object") {
+      n.dist._pos = {};
+      for (const [s, sp] of Object.entries(mk)) if (ok(sp)) n.dist._pos[s] = { x: sp.x, y: sp.y };
+    }
+  }
+  // Схема «в p», если все её постоянные вероятности заданы как p.
+  const fixed = g.nodes.filter((n) => n.dist && n.dist.type === "fixed");
+  g.prob = fixed.length && fixed.every((n) => probKey(n.dist) === "p") ? "p" : "q";
+  return { g, req, warns };
+}
+
+// Авто-раскладка по рядам (упрощённый Sugiyama). Ряд узла — длина самого
+// длинного пути от него до стока: вершина оказывается внизу, каждый узел — на
+// ряд выше самого нижнего из своих потребителей, и все дуги идут сверху вниз,
+// как их рисует renderEdges. Порядок внутри рядов — несколько проходов по
+// барицентрам соседей, это заметно уменьшает число пересечений.
+const LAYOUT_GAP_X = NODE_W + 40, LAYOUT_GAP_Y = NODE_H + 60;
+function autoLayout(nodes, edges) {
+  const ins = new Map(nodes.map((n) => [n.id, []]));   // входы — ряды выше
+  const outs = new Map(nodes.map((n) => [n.id, []]));  // потребители — ниже
+  for (const e of edges) {
+    if (!ins.has(e.parent) || !ins.has(e.child)) continue;
+    ins.get(e.parent).push(e.child);
+    outs.get(e.child).push(e.parent);
+  }
+  // Ряды считаем алгоритмом Кана от стоков, без рекурсии: схемы бывают
+  // глубокими, а стек браузера — нет.
+  const rank = new Map();
+  const left = new Map(nodes.map((n) => [n.id, outs.get(n.id).length]));
+  const queue = nodes.filter((n) => left.get(n.id) === 0).map((n) => n.id);
+  for (const id of queue) rank.set(id, 0);
+  for (let i = 0; i < queue.length; i++) {
+    const r = rank.get(queue[i]) + 1;
+    for (const c of ins.get(queue[i])) {
+      if (!(rank.get(c) >= r)) rank.set(c, r);
+      left.set(c, left.get(c) - 1);
+      if (left.get(c) === 0) queue.push(c);
+    }
+  }
+  // Узлы на цикле в очередь так и не попадут (такую схему отвергнет движок).
+  for (const n of nodes) if (!rank.has(n.id)) rank.set(n.id, 0);
+
+  let maxRank = 0;
+  for (const r of rank.values()) maxRank = Math.max(maxRank, r);
+  const rows = Array.from({ length: maxRank + 1 }, () => []);
+  for (const n of nodes) rows[maxRank - rank.get(n.id)].push(n.id);
+
+  const cx = new Map();   // центр узла по x; ряды центрированы относительно 0
+  const place = (row) => row.forEach((id, i) => cx.set(id, (i - (row.length - 1) / 2) * LAYOUT_GAP_X));
+  rows.forEach(place);
+  const bary = (id, nb) => {
+    const xs = nb.get(id);
+    return xs.length ? xs.reduce((s, o) => s + cx.get(o), 0) / xs.length : cx.get(id);
+  };
+  for (let pass = 0; pass < 8; pass++) {
+    // Чётные проходы — сверху вниз по входам, нечётные — снизу вверх по потребителям.
+    const down = pass % 2 === 0;
+    const nb = down ? ins : outs;
+    for (const row of down ? rows : rows.slice().reverse()) {
+      const key = new Map(row.map((id) => [id, bary(id, nb)]));
+      row.sort((a, b) => key.get(a) - key.get(b));
+      place(row);
+    }
+  }
+
+  let minX = Infinity;
+  for (const x of cx.values()) minX = Math.min(minX, x);
+  const pos = new Map();
+  rows.forEach((row, r) => row.forEach((id) => {
+    pos.set(id, { x: Math.round(cx.get(id) - minX) + 60, y: 60 + r * LAYOUT_GAP_Y });
+  }));
+  return pos;
+}
+
+// Заменить текущую схему документом. Бросает Error, если документ не годится;
+// возвращает список предупреждений.
+function applyDocument(doc) {
+  const { g, req, warns } = documentToGraph(doc);
+  graph = g;
+  seq = graph.nodes.reduce((m, n) => Math.max(m, idNum(n.id)), 0);
+  if (Array.isArray(req.times) && req.times.length) $("mtime").value = req.times.join(", ");
+  else if (req.mission_time != null) $("mtime").value = String(req.mission_time);
+  $("kind").value = graph.kind;
+  jsonEdited = false;     // вкладка JSON снова показывает схему
+  // Результаты относились к прежней схеме.
+  $("results").innerHTML = '<p class="hint">Постройте схему и нажмите «Рассчитать».</p>';
+  switchTab("diagram");   // fitView меряет холст, а скрытый холст имеет размер 0
+  buildPalette(); select(null); fitView();
+  return warns;
+}
+
 // ===========================================================================
-// Файлы: сохранить на диск
+// Файлы: сохранить на диск и открыть с диска
 // ===========================================================================
 // Вкладка JSON показывает документ текущей схемы, пока его не правили руками.
 let jsonEdited = false;
@@ -1170,6 +1363,25 @@ function downloadText(name, text) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function openFile(file) {
+  let doc, warns;
+  try { doc = JSON.parse(await file.text()); }
+  catch (e) { setStatus(`«${file.name}»: некорректный JSON — ${e.message}`, "err"); return; }
+  try { warns = applyDocument(doc); }
+  catch (e) { setStatus(`«${file.name}»: ${e.message}`, "err"); return; }
+  setFileName(file.name);
+  reportLoad("открыт " + file.name, warns);
+}
+
+function reportLoad(what, warns) {
+  if (!warns.length) { setStatus(what, "ok"); return; }
+  setStatus(`${what} — предупреждений: ${warns.length}`, "err");
+  const out = $("results"); out.textContent = "";
+  out.append(el("h3", {}, "Предупреждения при загрузке"));
+  for (const w of warns) out.append(el("p", { class: "warn" }, "⚠ " + w));
+  openDrawer();
 }
 
 // ===========================================================================
@@ -1277,51 +1489,12 @@ function switchTab(name) {
 }
 function openDrawer() { $("results-drawer").classList.remove("collapsed"); $("drawer-toggle").textContent = "свернуть ▾"; }
 
-async function loadExample(kind, name) {
+async function loadExample(name) {
   const r = await fetch("/api/examples/" + name);
-  const req = await r.json();
-  graph = requestToGraph(req);
-  seq = graph.nodes.reduce((m, n) => Math.max(m, idNum(n.id)), 0);
-  $("kind").value = graph.kind;
-  buildPalette(); select(null); fitView();
-  setStatus("пример загружен", "ok");
+  const warns = applyDocument(await r.json());
+  setFileName(name + ".json");
+  reportLoad("пример загружен", warns);
 }
-
-// Best-effort import of a request JSON into an editable graph (auto-layout).
-function requestToGraph(req) {
-  const m = req.model;
-  const g = { kind: m.type, nodes: [], edges: [] };
-  const pos = {}; let col = 0;
-  const place = (id) => { if (!pos[id]) { pos[id] = { x: 60 + (col % 6) * 170, y: 60 + Math.floor(col / 6) * 110 }; col++; } return pos[id]; };
-  if (m.type === "fault_tree") {
-    for (const e of m.events) { const p = place(e.id); g.nodes.push({ id: e.id, x: p.x, y: p.y, role: "event", dist: e.dist }); }
-    for (const gt of (m.gates || [])) { const p = place(gt.id); g.nodes.push({ id: gt.id, x: p.x, y: p.y, role: "gate", op: gt.op, k: gt.k }); }
-    for (const gt of (m.gates || [])) for (const inp of gt.inputs) g.edges.push({ parent: gt.id, child: inp });
-    markTop(g, m.top);
-  } else {
-    for (const nd of m.nodes) { const p = place(nd.id); g.nodes.push({ id: nd.id, x: p.x, y: p.y, role: "sfc", dist: nd.dist || null }); }
-    for (const nd of m.nodes) {
-      // Per-arc kind; legacy files fall back to the node's `combine` default.
-      const defaultConj = (nd.combine || "or") === "and";
-      for (const inp of (nd.inputs || [])) {
-        g.edges.push({
-          parent: nd.id, child: inp.from,
-          inverse: !!inp.inverse,
-          conj: inp.conjunctive != null ? !!inp.conjunctive : defaultConj,
-        });
-      }
-    }
-    const target = m.criterion && (m.criterion.target || m.criterion.node);
-    if (target) markTop(g, target);
-  }
-  // Схема «в p», если все её постоянные вероятности заданы как p.
-  const fixed = g.nodes.filter((n) => n.dist && n.dist.type === "fixed");
-  g.prob = fixed.length && fixed.every((n) => probKey(n.dist) === "p") ? "p" : "q";
-  if (req.times) $("mtime").value = req.times.join(", ");
-  else if (req.mission_time != null) $("mtime").value = String(req.mission_time);
-  return g;
-}
-function markTop(g, id) { const n = g.nodes.find((x) => x.id === id); if (n) n.top = true; }
 
 // ---- events ----
 document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
@@ -1345,14 +1518,26 @@ $("prob-all").addEventListener("change", () => {
   for (const n of graph.nodes) setProbKey(n.dist, graph.prob);
   renderInspector(); render();
 });
-$("example-ft").addEventListener("click", () => loadExample("fault_tree", "fault_tree"));
-$("example-sfc").addEventListener("click", () => loadExample("sfc", "sfc_bridge"));
+$("example-ft").addEventListener("click", () => loadExample("fault_tree"));
+$("example-sfc").addEventListener("click", () => loadExample("sfc_bridge"));
 $("from-diagram").addEventListener("click", () => {
   const { doc, errs } = graphToDocument();
   setJsonText(doc);
   if (errs.length) setStatus("схема неполна, JSON частичный", "err"); else setStatus("JSON построен", "ok");
 });
+$("to-diagram").addEventListener("click", () => {
+  let warns;
+  try { warns = applyDocument(JSON.parse($("input").value)); }
+  catch (e) { setStatus("в схему не перевести: " + e.message, "err"); return; }
+  reportLoad("схема построена по JSON", warns);
+});
 $("input").addEventListener("input", () => { jsonEdited = true; });
+$("open").addEventListener("click", () => $("file-input").click());
+$("file-input").addEventListener("change", () => {
+  const f = $("file-input").files[0];
+  $("file-input").value = "";   // иначе повторное открытие того же файла не сработает
+  if (f) openFile(f);
+});
 $("save").addEventListener("click", saveFile);
 $("file-name").addEventListener("change", () => setFileName($("file-name").value.trim()));
 $("format").addEventListener("click", () => {
@@ -1381,8 +1566,9 @@ document.addEventListener("keydown", (e) => {
   const mod = e.ctrlKey || e.metaKey;
   if (e.key === "Escape" && !$("mk-modal").classList.contains("hidden")) closeMarkov();
   else if (mod && e.key === "Enter") analyze();
-  // e.code — физическая клавиша: в русской раскладке e.key был бы «ы».
+  // e.code — физическая клавиша: в русской раскладке e.key был бы «ы» / «щ».
   else if (mod && e.code === "KeyS") { e.preventDefault(); saveFile(); }
+  else if (mod && e.code === "KeyO") { e.preventDefault(); $("file-input").click(); }
 });
 
 // ---- init ----
