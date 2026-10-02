@@ -142,14 +142,16 @@ button.pal { width: 100%; text-align: left; padding: 6px 10px; border-color: tra
 .edge.inverse { stroke-dasharray: 5 3; }
 .edge:hover { stroke: var(--accent); }
 .edge.selected { stroke: var(--sel); stroke-width: 3; }
-/* Canonical СФЦ arc kinds: conjunctive (И) greenish, disjunctive (ИЛИ) default. */
-.edge.conj { stroke: var(--gate-br); }
+/* Canonical СФЦ arc kinds: conjunctive (И) ends in a dot, disjunctive (ИЛИ)
+   ends in an arrowhead — not just a color difference. */
+.edge.conj { stroke: var(--gate-br); marker-end: url(#dot); }
 .edge.conj.selected { stroke: var(--sel); }
 .edge-hit { stroke: transparent; stroke-width: 12; fill: none; cursor: pointer; }
 .edge-label { font: 11px var(--mono); fill: var(--accent); pointer-events: none; }
 .edge-label.conj { fill: var(--gate-br); }
 .edge-label.disj { fill: var(--accent); }
 #arrow path { fill: var(--edge); }
+#dot circle { fill: var(--gate-br); }
 .temp-edge { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 4 3; fill: none; }
 
 /* ---- inspector ---- */
