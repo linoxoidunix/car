@@ -2,6 +2,8 @@
 //! событиями. И дерево отказов, и СФЦ превращаются в такой граф. So the rest
 //! of the engine works with one common form.
 
+use std::collections::HashMap;
+
 use crate::dist::ReliabilityModel;
 
 pub type NodeId = usize;
@@ -126,6 +128,10 @@ pub struct System {
     pub kind: ModelKind,
     pub events: Vec<BasicEvent>,
     pub formula: Formula,
+    /// Имена из входной схемы у узлов формулы: элемент дерева отказов или узел
+    /// СФЦ, чья функция этот узел. Расчёту не нужны — по ним выдача называет
+    /// модули (у служебных узлов имени нет).
+    pub labels: HashMap<NodeId, String>,
 }
 
 impl System {

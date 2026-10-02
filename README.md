@@ -130,7 +130,9 @@ frontends.
     "path_sets": false,          // default false
     "max_order": 8,              // max literals per set
     "max_sets": 20000,           // max sets kept (per module and final)
-    "cutoff": 0.0                // drop sets below this probability
+    "cutoff": 0.0,               // drop sets below this probability
+    "bdd": false,                // also return the ROBDD of every module
+    "bdd_max_nodes": 2000        // cap on returned ROBDD nodes (sum over modules)
   }
 }
 ```
@@ -267,11 +269,36 @@ chain cannot express.
 Set probabilities are evaluated at the first time point. `top_probability`
 is always **exact** (BDD), independent of set truncation.
 
+With `"options": {"bdd": true}` the response also carries the ROBDDs the
+probability was computed on — one per module, nested modules acting as single
+variables of their parents (the web UI draws them in the results):
+
+```jsonc
+"bdd": {
+  "top": 3,                     // index of the top module in "modules"
+  "truncated": false,           // true: some module exceeded bdd_max_nodes
+  "modules": [
+    {"name": "pumps",           // gate / SFC node whose function this is
+     "vars": [{"event": "pump_a", "probability": 0.0952},   // by level, top to bottom;
+              {"event": "pump_b", "probability": 0.0010}],  // or {"module": i, ...}
+     "root": 2, "size": 2, "probability": 9.5e-05,
+     "nodes": [{"id": 2, "var": 0, "lo": 0, "hi": 3, "probability": 9.5e-05},
+               {"id": 3, "var": 1, "lo": 0, "hi": 1, "probability": 0.0010}]},
+    ...
+  ]
+}
+```
+
+Ids 0 and 1 are the FALSE and TRUE terminals; `lo`/`hi` are the branches for
+variable = 0 / 1; node probability is that of the sub-function rooted there.
+Only nodes reachable from the root are returned (`stats.bdd_nodes` counts
+every node built, intermediates included).
+
 ## Build & test
 
 ```
 cargo build --release              # binaries: cra (CLI), cra-server
-cargo test                         # 41 tests across the workspace
+cargo test                         # 47 tests across the workspace
 ./target/release/cra crates/cra-cli/examples/fault_tree.json --pretty
 CRA_ADDR=127.0.0.1:8080 ./target/release/cra-server
 ```

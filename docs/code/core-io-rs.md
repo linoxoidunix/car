@@ -1,6 +1,6 @@
 # 8. `crates/cra-core/src/io.rs` — формат JSON и сборка модели
 
-**Размер:** 713 строк, самый большой файл движка. **Задача:** описать формат
+**Размер:** 796 строк, самый большой файл движка. **Задача:** описать формат
 запроса и ответа, проверить пришедшие данные и превратить их во внутреннюю
 `System`.
 
@@ -71,6 +71,8 @@ impl Default for Options {
             max_order: 8,        // наборов длиннее 8 практически не бывает значимых
             max_sets: 20_000,    // предел памяти
             cutoff: 0.0,         // порог по вероятности выключен
+            bdd: false,          // ROBDD модулей — только по запросу (для рисования)
+            bdd_max_nodes: 2_000, // предел их суммарного размера в ответе
         }
     }
 }
@@ -90,6 +92,8 @@ pub struct Response {
     pub cut_sets: Option<SetsReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path_sets: Option<SetsReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bdd: Option<BddReport>,   // только с options.bdd
     pub stats: Stats,
     pub warnings: Vec<String>,
 }
@@ -102,6 +106,13 @@ pub struct Response {
 
 `skip_serializing_if` убирает из JSON пустые поля, вместо того чтобы слать
 `null`.
+
+`BddReport` — диаграммы модулей для рисования: индекс вершины `top`, список
+`modules` (вложенные раньше тех, кто их использует) и флаг `truncated`. У
+модуля — имя, переменные по уровням (`{event}` или `{module}`, у каждой
+вероятность), корень, размер и узлы `{id, var, lo, hi, probability}`. Как они
+собираются — в [core-analysis-rs.md](core-analysis-rs.md), раздел
+«ROBDD наружу».
 
 ## Часть 2: проверка распределений — `DistInput::to_model`
 
@@ -322,6 +333,19 @@ pub enum CriterionInput {
 `resolve_sfc_output` для листьев. Циклы ловятся тем же приёмом `in_progress`,
 с более понятным текстом: «SFC contains a cycle through node 'x' (cyclic
 schemes are not supported)».
+
+## Имена узлов формулы — `name_nodes`
+
+Модуль в выдаче `bdd` должен называться понятно — по элементу дерева или
+узлу СФЦ, а не «модуль 3». Формула имён не хранит, но они есть под рукой при
+сборке: `resolve_ft` складывает в `resolved` «имя элемента → узел формулы», а
+`resolve_sfc_output` в `outputs` — «узел СФЦ → узел его функции».
+`name_nodes` переворачивает эти таблицы в `System::labels` («узел → имя»).
+
+Одно тонкое место: узел СФЦ без своего элемента и с одним прямым входом не
+строит нового узла формулы, а берёт функцию источника. Тогда у одного узла
+формулы два имени, и `name_nodes` пишет оба через запятую (имена
+отсортированы, так что подпись не зависит от порядка в хеш-таблице).
 
 ## Итог
 
