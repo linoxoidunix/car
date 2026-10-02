@@ -145,6 +145,14 @@
   <section id="results-drawer" class="results-drawer">
     <div class="drawer-head">
       <span>Результаты</span>
+      <!-- Что считать, кроме вероятности вершины (она считается всегда).
+           Настройка редактора: состояние хранит и расставляет app.js (cra.calc). -->
+      <div class="calc" role="group" aria-label="Что считать">
+        <span class="calc-title">Считать:</span>
+        <label title="Минимальные сечения (МНС)"><input type="checkbox" data-calc="cut_sets" checked> сечения</label>
+        <label title="Минимальные пути (МНП)"><input type="checkbox" data-calc="path_sets" checked> пути</label>
+        <label title="Диаграммы решений (ROBDD) модулей"><input type="checkbox" data-calc="bdd" checked> ROBDD</label>
+      </div>
       <button id="drawer-toggle" type="button" class="secondary">свернуть ▾</button>
     </div>
     <div id="results" class="results">
