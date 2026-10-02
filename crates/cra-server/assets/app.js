@@ -1653,21 +1653,97 @@ async function analyze() {
 function fmtP(p) { if (p === 0) return "0"; return p >= 1e-3 ? p.toFixed(6) : p.toExponential(4); }
 function showError(msg) { $("results").innerHTML = ""; $("results").append(el("div", { class: "err-box" }, msg)); }
 
-function renderSets(title, report) {
+// Наборы: сечения (which = "cut") или пути ("path"); сервер отдаёт их по
+// убыванию вероятности. P сечения — вероятность совместного отказа его
+// элементов, сумма по сечениям — оценка Q сверху. Доля сечения и накопленная
+// доля — от этой суммы: видно, сколько первых сечений дают почти весь риск.
+// P пути — вероятность того, что все его элементы исправны; складывать её
+// осмысленно не с чем, поэтому долей у путей нет.
+const SETS_ROWS = 200;
+function renderSets(report, which, kind) {
   if (!report) return null;
-  const box = el("div");
-  box.append(el("h3", {}, `${title} — ${report.count}${report.truncated ? " (усечено)" : ""}`));
-  box.append(el("div", { class: "meta" },
-    `Σ P(набор) ≈ ${fmtP(report.rare_event_approx)} · оценка Эзари–Прошана ${fmtP(report.esary_proschan_bound)}`));
-  const table = el("table");
-  table.append(el("tr", {}, el("th", {}, "Порядок"), el("th", {}, "Элементы"), el("th", {}, "P")));
-  for (const s of report.sets.slice(0, 200)) {
+  const cut = which === "cut";
+  const box = el("div", { class: "sets " + which });
+  box.append(el("h3", {}, `${cut ? "Минимальные сечения (МНС)" : "Минимальные пути (МНП)"} — ` +
+    `${report.count}${report.truncated ? " (усечено)" : ""}`));
+  const sum = report.rare_event_approx;
+  const share = (p) => (cut && sum > 0 ? p / sum : null);
+  let meta = `Σ P(набор) ≈ ${fmtP(sum)} · оценка Эзари–Прошана ${fmtP(report.esary_proschan_bound)}`;
+  if (cut && sum > 0) {
+    let acc = 0, k = 0;
+    while (k < report.sets.length && acc < 0.9 * sum) acc += report.sets[k++].probability;
+    meta += k === 1 ? " · 90 % суммы даёт сечение №1" : ` · 90 % суммы дают сечения №1–${k}`;
+  }
+  box.append(el("div", { class: "meta" }, meta));
+  if (cut) { const sp = singleFailures(report, kind); if (sp) box.append(sp); }
+  box.append(ordersLine(report, share));
+
+  const table = el("table", { class: "sets-table" });
+  const head = el("tr", {}, el("th", { class: "num" }, "№"), el("th", { class: "num" }, "Порядок"),
+    el("th", {}, "Элементы"), el("th", { class: "num" }, "P"));
+  if (cut) head.append(el("th", { class: "num" }, "Доля"), el("th", { class: "num" }, "Накопл."));
+  table.append(head);
+  let acc = 0;
+  report.sets.slice(0, SETS_ROWS).forEach((s, i) => {
     const chips = el("td", { class: "chips" });
     for (const ev of s.events) chips.append(el("span", {}, ev));
-    table.append(el("tr", {}, el("td", { class: "num" }, String(s.order)), chips, el("td", { class: "num" }, fmtP(s.probability))));
+    const tr = el("tr", {}, el("td", { class: "num" }, String(i + 1)), el("td", { class: "num" }, String(s.order)),
+      chips, el("td", { class: "num" }, fmtP(s.probability)));
+    if (cut) {
+      acc += s.probability;
+      const sh = share(s.probability);
+      const td = el("td", { class: "num bar" }, fmtShare(sh));
+      td.style.setProperty("--w", Math.max(0, Math.min(1, sh || 0)) * 100 + "%");
+      tr.append(td, el("td", { class: "num" }, fmtShare(share(acc))));
+    }
+    table.append(tr);
+  });
+  if (report.sets.length > SETS_ROWS) {
+    table.append(el("tr", {}, el("td", { colspan: cut ? 6 : 4, class: "meta" },
+      `показаны первые ${SETS_ROWS} из ${report.sets.length}`)));
   }
   box.append(table);
   return box;
+}
+
+// Единичные отказы — сечения первого порядка: элемент, отказ которого в
+// одиночку валит систему. Если их нет и список не усечён, это тоже стоит
+// сказать: система переносит отказ любого одного элемента. При усечённом
+// списке (max_order, max_sets, cutoff) сечение первого порядка могло не
+// попасть в ответ, и «нет» утверждать нельзя.
+function singleFailures(report, kind) {
+  const sfc = kind === "sfc";
+  const singles = report.sets.filter((s) => s.order === 1).map((s) => s.events[0]);
+  if (!singles.length) {
+    if (report.truncated) return null;
+    return el("p", { class: "spof ok" }, sfc
+      ? "Единичных отказов нет: критерий выполняется при отказе любого одного элемента."
+      : "Единичных отказов нет: отказ любого одного элемента система переносит.");
+  }
+  const p = el("p", { class: "spof warn" }, `⚠ Единичные отказы — ${singles.length}: `);
+  const chips = el("span", { class: "chips" });
+  for (const ev of singles.slice(0, GROUP_CHIPS)) chips.append(el("span", {}, ev));
+  p.append(chips);
+  if (singles.length > GROUP_CHIPS) p.append(` и ещё ${singles.length - GROUP_CHIPS}`);
+  p.append(sfc ? ". Отказ любого из них в одиночку нарушает критерий."
+    : ". Отказ любого из них в одиночку приводит к отказу системы.");
+  return p;
+}
+
+// Сколько наборов каждого порядка (у сечений — и их доля суммы): сечения
+// высоких порядков многочисленны, но риск обычно дают низкие.
+function ordersLine(report, share) {
+  const by = new Map();
+  for (const s of report.sets) {
+    const o = by.get(s.order) || { n: 0, p: 0 };
+    o.n++; o.p += s.probability;
+    by.set(s.order, o);
+  }
+  const parts = [...by.keys()].sort((a, b) => a - b).map((k) => {
+    const o = by.get(k), sh = share(o.p);
+    return `порядок ${k}: ${o.n}` + (sh == null ? "" : ` (${fmtShare(sh)})`);
+  });
+  return el("div", { class: "meta orders" }, "По порядку — " + parts.join(" · "));
 }
 // Сетка кривой: CURVE_STEPS равных шагов от 0 до наибольшего момента, без
 // моментов, которые уже есть в запросе.
@@ -1710,8 +1786,8 @@ function renderResponse(resp, view) {
   if (calc.bdd && !resp.bdd) missing.push("ROBDD");
   if (missing.length) out.append(el("p", { class: "warn" }, `⚠ Запрошено, но сервер не вернул: ${missing.join(", ")}. ` +
     "Похоже, он запущен до обновления движка — пересоберите и перезапустите сервер."));
-  const cuts = renderSets("Минимальные сечения (МНС)", resp.cut_sets); if (cuts) out.append(cuts);
-  const paths = renderSets("Минимальные пути (МНП)", resp.path_sets); if (paths) out.append(paths);
+  const cuts = renderSets(resp.cut_sets, "cut", kind); if (cuts) out.append(cuts);
+  const paths = renderSets(resp.path_sets, "path", kind); if (paths) out.append(paths);
   for (const w of resp.warnings || []) out.append(el("p", { class: "warn" }, "⚠ " + w));
   const s = resp.stats;
   out.append(el("div", { class: "meta" },
