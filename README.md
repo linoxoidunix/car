@@ -132,7 +132,8 @@ frontends.
     "max_sets": 20000,           // max sets kept (per module and final)
     "cutoff": 0.0,               // drop sets below this probability
     "bdd": false,                // also return the ROBDD of every module
-    "bdd_max_nodes": 2000        // cap on returned ROBDD nodes (sum over modules)
+    "bdd_max_nodes": 2000,       // cap on returned ROBDD nodes (sum over modules)
+    "importance": false          // importance measures of every basic event
   }
 }
 ```
@@ -297,11 +298,32 @@ variable = 0 / 1; node probability is that of the sub-function rooted there.
 Only nodes reachable from the root are returned (`stats.bdd_nodes` counts
 every node built, intermediates included).
 
+With `"options": {"importance": true}` the response ranks basic events:
+
+```jsonc
+"importance": {
+  "failure_probability": 0.0077,      // Q: system failure (sfc: 1 − P(criterion))
+  "events": [                         // most critical first
+    {"event": "power", "q": 0.0048,
+     "birnbaum": 0.9971,              // dQ/dq = Q(q=1) − Q(q=0)
+     "criticality": 0.624,            // q·I_B/Q = Fussell–Vesely (risk-decrease form)
+     "raw": 130.0,                    // Q(q=1)/Q, risk achievement worth
+     "rrw": 2.66},                    // Q/Q(q=0), risk reduction worth (null = infinite)
+    ...
+  ]
+}
+```
+
+All four measures come from the exact Birnbaum derivative, computed for every
+event at once in two linear passes over each module BDD and chained through
+nested modules. Measures are in failure terms for both notations; values are
+for the first time point.
+
 ## Build & test
 
 ```
 cargo build --release              # binaries: cra (CLI), cra-server
-cargo test                         # 47 tests across the workspace
+cargo test                         # 52 tests across the workspace
 ./target/release/cra crates/cra-cli/examples/fault_tree.json --pretty
 CRA_ADDR=127.0.0.1:8080 ./target/release/cra-server
 ```

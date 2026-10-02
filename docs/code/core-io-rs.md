@@ -1,6 +1,6 @@
 # 8. `crates/cra-core/src/io.rs` — формат JSON и сборка модели
 
-**Размер:** 796 строк, самый большой файл движка. **Задача:** описать формат
+**Размер:** 831 строка, самый большой файл движка. **Задача:** описать формат
 запроса и ответа, проверить пришедшие данные и превратить их во внутреннюю
 `System`.
 
@@ -73,6 +73,7 @@ impl Default for Options {
             cutoff: 0.0,         // порог по вероятности выключен
             bdd: false,          // ROBDD модулей — только по запросу (для рисования)
             bdd_max_nodes: 2_000, // предел их суммарного размера в ответе
+            importance: false,   // меры значимости — по запросу
         }
     }
 }
@@ -94,6 +95,8 @@ pub struct Response {
     pub path_sets: Option<SetsReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bdd: Option<BddReport>,   // только с options.bdd
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub importance: Option<ImportanceReport>,   // только с options.importance
     pub stats: Stats,
     pub warnings: Vec<String>,
 }
@@ -113,6 +116,13 @@ pub struct Response {
 вероятность), корень, размер и узлы `{id, var, lo, hi, probability}`. Как они
 собираются — в [core-analysis-rs.md](core-analysis-rs.md), раздел
 «ROBDD наружу».
+
+`ImportanceReport` — меры значимости: вероятность отказа системы
+`failure_probability` и по записи на каждое базовое событие `{event, q,
+birnbaum, criticality, raw, rrw}`. Последние три — `Option`: при `Q = 0` они не
+определены, а RRW ещё и бесконечен, если элемент в одиночку держит систему;
+serde пишет `None` как `null`. Как считаются — в
+[core-analysis-rs.md](core-analysis-rs.md), раздел «Меры значимости».
 
 ## Часть 2: проверка распределений — `DistInput::to_model`
 
