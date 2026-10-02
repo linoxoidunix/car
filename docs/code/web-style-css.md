@@ -23,6 +23,8 @@
   --sel: #4d6bfe;                              /* выделение — синее */
   --edge: #a0a6b2;      --scroll: #d1d5db;
   --bar: rgba(59, 130, 246, .18);              /* полоски долей в таблицах */
+  --hl-cut: #4d6bfe;    --hl-cut-bg: #dbeafe;   /* подсвеченное сечение: отказ */
+  --hl-path: #1d8a47;   --hl-path-bg: #dcf2e4;  /* подсвеченный путь: работа */
   --shadow: …;          --backdrop: rgba(20, 24, 40, .35);
   --radius: 10px;       --radius-lg: 16px;
   --font: Inter, "Segoe UI", system-ui, -apple-system, Roboto, "Noto Sans", sans-serif;
@@ -47,6 +49,7 @@
     --event: #1e2d4a; --event-br: #4f7fd9; --gate: #22352a; --gate-br: #5aa476;
     --sel: #6f9bff; --edge: #6b707a; --bar: rgba(111, 155, 255, .24); --scroll: #4a4c52;
     --shadow: …; --backdrop: rgba(0, 0, 0, .55);
+    --hl-cut: #6f9bff; --hl-cut-bg: #1f3460; --hl-path: #4cc27a; --hl-path-bg: #1d3a29;
   }
 }
 ```
@@ -167,6 +170,55 @@ button:hover:not(:disabled) { background-color: var(--hover); }
 намеренное: цветовое кодирование бесполезно при чёрно-белой печати и для людей
 с нарушением цветовосприятия, а пунктир и подпись работают всегда.
 
+## Подсветка сечения или пути
+
+```css
+#canvas.hl-cut  { --hl: var(--hl-cut);  --hl-bg: var(--hl-cut-bg); }
+#canvas.hl-path { --hl: var(--hl-path); --hl-bg: var(--hl-path-bg); }
+.hl .node { opacity: .35; }
+.hl .node.hl-src, .hl .node.hl-via { opacity: 1; }
+.hl .node.hl-via .body { stroke: var(--hl); stroke-width: 2.5; }
+.hl .node.hl-src .body { stroke: var(--hl); stroke-width: 3.5; fill: var(--hl-bg); }
+.hl .node.selected .body { stroke: var(--sel); }
+.hl .edge, .hl .edge-label { opacity: .3; }
+.hl .edge-label.hl-via { opacity: 1; }
+.hl .edge.hl-via { opacity: 1; stroke: var(--hl); stroke-width: 3; marker-end: url(#arrow-hl); }
+.hl .edge.conj.hl-via { marker-end: url(#dot-hl); }
+#arrow-hl path, #dot-hl circle { fill: var(--hl); }
+```
+
+Пока на схеме подсвечен набор (щелчок по строке сечения или пути в
+результатах), у холста класс `hl` и вдобавок `hl-cut` или `hl-path`. Классы
+узлов и дуг ставит `app.js`: `hl-src` — элемент набора, `hl-via` — узел или
+дуга, куда дошло его состояние. Три уровня читаются сразу:
+
+- элементы набора — толстая рамка и заливка;
+- узлы и дуги, куда дошло их состояние, — рамка или линия того же цвета;
+- всё остальное приглушено (`opacity`), но видно — схема не теряет контекста.
+
+Цвет: сечение — синий акцент, как выбранная строка; путь — зелёный, работа. Пара
+`--hl`/`--hl-bg` задана на холсте одним правилом на вид набора, а правила
+узлов и дуг от вида не зависят. Маркеры `#arrow-hl` и `#dot-hl` лежат в
+`<defs>` того же `svg` и берут `--hl` оттуда же, поэтому наконечник
+подсвеченной дуги того же цвета, что линия.
+
+Выделение для правки (`.selected`) остаётся видно поверх подсветки: правило
+`.hl .node.selected .body` стоит последним и возвращает рамке цвет выделения.
+Удалить, сдвинуть или поправить узел можно, не снимая подсветки.
+
+```css
+.hl-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); … }
+.hl-banner.path { border-left-color: var(--hl-path); }
+.hl-banner[hidden] { display: none; }
+```
+
+Плашка о подсвеченном наборе висит над холстом вверху по центру. Входы в
+редакторе рисуются рядами выше, так что вершина дерева и критерий СФЦ стоят
+внизу, и путь отказа к ним плашка не закрывает. Вверху стоят элементы — если
+элемент набора оказался под плашкой, `revealNodes` сдвигает схему. Цветная
+полоса слева — того же цвета, что подсветка. `display: flex` перебивает
+стандартное скрытие по атрибуту `hidden`, поэтому для него отдельное правило.
+
 ## Зона попадания по дуге
 
 ```css
@@ -282,7 +334,7 @@ none` обязателен: конец линии и её маркер лежа�
 ```css
 .imp-table th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
 .imp-table th.num { text-align: right; }
-td.bar { background: linear-gradient(to right, var(--bar) var(--w), transparent var(--w)); }
+td.bar { background-image: linear-gradient(to right, var(--bar) var(--w), transparent var(--w)); }
 ```
 
 Заголовки сортируются щелчком, поэтому курсор-рука и запрет выделения текста
@@ -307,6 +359,11 @@ td.bar { background: linear-gradient(to right, var(--bar) var(--w), transparent 
 .sets .orders { margin-top: 2px; }
 .spof { margin: 6px 0 2px; font-size: 12px; }
 .spof.ok { color: var(--ok); }
+.sets-table tr[data-no] { cursor: pointer; }
+.sets-table tr[data-no]:hover td { background-color: var(--bg); }
+.sets.cut tr.on td { background-color: var(--hl-cut-bg); }
+.sets.cut tr.on td:first-child { box-shadow: inset 3px 0 0 var(--hl-cut); }
+/* у путей — то же с --hl-path */
 ```
 
 Таблица растянута на всю ширину панели, и без ограничений браузер делит место
@@ -319,6 +376,11 @@ td.bar { background: linear-gradient(to right, var(--bar) var(--w), transparent 
 такие элементы есть, и цветом «в порядке» (`.ok`), если система переносит
 отказ любого одного элемента. Строка распределения по порядкам (`.orders`)
 прижата к строке над ней: обе — пояснения к одной таблице.
+
+Строка таблицы — кнопка «показать на схеме». Показанная строка окрашена так
+же, как подсветка на холсте, с цветной полосой слева. Полоска доли (`td.bar`)
+задана через `background-image`, а не `background`: тогда фон наведения и
+показанной строки (`background-color`) ложится под полоску, а не стирает её.
 
 ## Курсоры
 
