@@ -16,7 +16,7 @@ const $ = (id) => document.getElementById(id);
 //   узлов (отказ q или успех p); его же показывает галочка «успех p у всех».
 // graph.edges: { parent, child, inverse?, conj? }
 //   смысл: `child` — это ВХОД для `parent` (ребёнок питает родителя).
-//   рисуем: линия от нижнего порта родителя вниз к ребёнку.
+//   рисуем: линия от нижнего порта ребёнка (источника) вниз к родителю.
 // ---------------------------------------------------------------------------
 let graph = { kind: "fault_tree", nodes: [], edges: [] };
 let selected = null;           // id выбранного узла
@@ -247,7 +247,9 @@ function renderEdges() {
   for (const e of graph.edges) {
     const p = nodeById(e.parent), c = nodeById(e.child);
     if (!p || !c) continue;
-    const a = bottomPort(p), b = topCenter(c);
+    // Arc is drawn source (child, provides the signal) -> consumer (parent,
+    // owns the input), matching the drag gesture direction in addEdge below.
+    const a = bottomPort(c), b = topCenter(p);
     const d = edgePath(a, b);
 
     const hit = document.createElementNS(SVGNS, "path");
@@ -412,7 +414,9 @@ window.addEventListener("mouseup", (ev) => {
   if (drag.mode === "connect") {
     $("temp-layer").textContent = "";
     const nodeG = ev.target.closest && ev.target.closest(".node");
-    if (nodeG) addEdge(drag.from, nodeG.dataset.id);
+    // Dragging from X's port and dropping on Y means "Y takes X as an input",
+    // i.e. Y is the consumer (parent) and X is the source (child).
+    if (nodeG) addEdge(nodeG.dataset.id, drag.from);
   } else if (drag.mode === "node") {
     document.querySelectorAll(".node.dragging").forEach((e) => e.classList.remove("dragging"));
     if (!drag.moved) select(drag.id);   // click without move = select
