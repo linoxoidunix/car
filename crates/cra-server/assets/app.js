@@ -1562,6 +1562,11 @@ async function analyze() {
     payload = req;
     setJsonText(graphToDocument().doc);   // keep JSON tab in sync
   }
+  // Диаграммы ROBDD нужны только для показа в результатах: флаг добавляет
+  // сам расчёт, в документ (файл, вкладка JSON) он не попадает. Явное
+  // "bdd": false в JSON сохраняется.
+  if (payload && typeof payload === "object") payload.options = Object.assign({ bdd: true }, payload.options);
+  const kind = payload && payload.model && payload.model.type;
   openDrawer();
   setStatus("расчёт…");
   $("analyze").disabled = true;
@@ -1572,7 +1577,7 @@ async function analyze() {
     });
     const data = await r.json();
     if (!r.ok) { showError(data.error || "HTTP " + r.status); setStatus("ошибка расчёта", "err"); return; }
-    renderResponse(data);
+    renderResponse(data, kind);
     setStatus("готово за " + Math.round(performance.now() - t0) + " мс", "ok");
   } catch (e) { setStatus("сетевая ошибка: " + e.message, "err"); }
   finally { $("analyze").disabled = false; }
@@ -1600,7 +1605,7 @@ function renderSets(title, report) {
   box.append(table);
   return box;
 }
-function renderResponse(resp) {
+function renderResponse(resp, kind) {
   const out = $("results"); out.textContent = "";
   out.append(el("h2", {}, resp.interpretation));
   if (resp.results.length === 1) out.append(el("div", { class: "kpi" }, fmtP(resp.results[0].top_probability)));
@@ -1609,6 +1614,9 @@ function renderResponse(resp) {
   for (const r of resp.results)
     table.append(el("tr", {}, el("td", { class: "num" }, String(r.time)), el("td", { class: "num" }, fmtP(r.top_probability))));
   out.append(table);
+  // Диаграммы — сразу под вероятностью, которую по ним посчитали: под списком
+  // из сотен наборов их было бы не найти.
+  const bdd = renderBdd(resp, kind); if (bdd) out.append(bdd);
   const cuts = renderSets("Минимальные сечения (МНС)", resp.cut_sets); if (cuts) out.append(cuts);
   const paths = renderSets("Минимальные пути (МНП)", resp.path_sets); if (paths) out.append(paths);
   for (const w of resp.warnings || []) out.append(el("p", { class: "warn" }, "⚠ " + w));
@@ -1616,6 +1624,212 @@ function renderResponse(resp) {
   out.append(el("div", { class: "meta" },
     `события: ${s.events} · узлы формулы: ${s.formula_nodes} · модули: ${s.modules} · узлы BDD: ${s.bdd_nodes}` +
     (s.noncoherent ? " · немонотонная схема" : "")));
+}
+
+// ===========================================================================
+// ROBDD модулей: диаграммы, по которым посчитан ответ (options.bdd)
+// ===========================================================================
+// Схема считается не целиком, а по независимым модулям: у каждого свой ROBDD,
+// вложенный модуль в нём — одна переменная. Раздел показывает эти диаграммы по
+// одной, с вкладками модулей. Рисунок послойный: строка — уровень (переменная)
+// в порядке BDD, внизу листья 0 и 1; сплошная линия — ветка «переменная = 1»,
+// пунктир — «= 0».
+const BDD = { rep: null, kind: null, cur: 0 };
+const BDD_ROW = 66, BDD_H = 28, BDD_GAP = 16, BDD_PAD = 18;
+
+function renderBdd(resp, kind) {
+  const b = resp.bdd;
+  if (!b || !b.modules || !b.modules.length) return null;
+  BDD.rep = b; BDD.kind = kind; BDD.cur = b.top;
+  // Раздел сворачивается; свёрнут ли он, помнит браузер (cra.bdd).
+  const box = el("details", { class: "bdd" });
+  try { box.open = localStorage.getItem("cra.bdd") !== "0"; } catch (e) { box.open = true; }
+  box.addEventListener("toggle", () => {
+    try { localStorage.setItem("cra.bdd", box.open ? "1" : "0"); } catch (e) {}
+  });
+  box.append(el("summary", {}, "Диаграммы решений (ROBDD) — модулей: " + b.modules.length));
+  const one = kind === "sfc" ? "элемент работоспособен" : "событие произошло";
+  const leaf = kind === "sfc" ? "критерий выполнен" : "вершинное событие наступило";
+  const split = b.modules.length > 1
+    ? "Схема разбита на независимые модули, у каждого свой ROBDD; вложенный модуль в нём — " +
+      "одна переменная (прямоугольник, щелчок открывает его диаграмму). "
+    : "Независимых модулей в схеме нет — вся она одна диаграмма. ";
+  box.append(el("div", { class: "meta" }, split +
+    `Строки сверху вниз — порядок переменных. Сплошная линия — переменная = 1 (${one}), пунктир — = 0; ` +
+    `лист 1 — ${leaf}. Вероятности — при t = ${fmtNum(resp.results[0].time)}, ` +
+    "подробности — при наведении на узел."));
+  box.append(el("div", { class: "bdd-tabs" }), el("div", { class: "bdd-view" }));
+  renderBddModule(box);
+  return box;
+}
+
+// Вкладки модулей: от вершины вниз по вложенности (обход в ширину).
+function bddOrder(b) {
+  const order = [b.top], seen = new Set(order);
+  for (let i = 0; i < order.length; i++) {
+    for (const v of b.modules[order[i]].vars) {
+      if (v.module != null && !seen.has(v.module)) { seen.add(v.module); order.push(v.module); }
+    }
+  }
+  b.modules.forEach((_, i) => { if (!seen.has(i)) order.push(i); });
+  return order;
+}
+function bddName(i) {
+  const m = BDD.rep.modules[i];
+  return m.name || "модуль " + i;
+}
+function bddVarName(m, v) {
+  const x = m.vars[v];
+  return x.event != null ? x.event : bddName(x.module);
+}
+
+function renderBddModule(box) {
+  box = box || document.querySelector("#results .bdd");
+  const b = BDD.rep;
+  const tabs = box.querySelector(".bdd-tabs");
+  tabs.textContent = "";
+  if (b.modules.length > 1) {
+    for (const i of bddOrder(b)) {
+      const m = b.modules[i];
+      const t = el("button", { type: "button", class: i === BDD.cur ? "on" : "",
+        title: `узлов: ${m.size} · P = ${fmtP(m.probability)}` },
+        (i === b.top ? "▲ " : "") + bddName(i) + " · " + m.size);
+      t.onclick = () => { BDD.cur = i; renderBddModule(box); };
+      tabs.append(t);
+    }
+  }
+  const view = box.querySelector(".bdd-view");
+  view.textContent = "";
+  const m = b.modules[BDD.cur];
+  if (m.size && !m.nodes.length) {
+    view.append(el("p", { class: "warn" },
+      `Диаграмма модуля «${bddName(BDD.cur)}» не выдана: в ней ${m.size} узлов — больше предела bdd_max_nodes.`));
+    return;
+  }
+  view.append(drawBdd(m));
+}
+
+// Послойная раскладка (упрощённый Sugiyama). Строка — уровень BDD, внизу
+// листья: 0 слева, 1 справа. Ветка через несколько уровней проходит через
+// «пустые» точки во всех промежуточных строках: они занимают место в
+// раскладке, и линия обходит узлы, а не идёт сквозь них. Порядок внутри строк —
+// несколько проходов по барицентрам соседей, как у авто-раскладки схемы.
+function drawBdd(m) {
+  const byId = new Map(m.nodes.map((n) => [n.id, n]));
+  const label = (id) => (id < 2 ? String(id) : bddVarName(m, byId.get(id).var));
+  const levels = [...new Set(m.nodes.map((n) => n.var))].sort((a, b) => a - b);
+  const rowOfVar = new Map(levels.map((v, r) => [v, r]));
+  const leafRow = levels.length;
+  const rowOf = (id) => (id < 2 ? leafRow : rowOfVar.get(byId.get(id).var));
+  const rows = Array.from({ length: leafRow + 1 }, () => []);
+  for (const n of m.nodes) rows[rowOf(n.id)].push(n.id);
+  rows[leafRow] = [0, 1].filter((t) => m.root === t || m.nodes.some((n) => n.lo === t || n.hi === t));
+
+  // Узлы — числа (id), пустые точки — строки: так ключи не пересекаются.
+  const ups = new Map(), downs = new Map();
+  const touch = (k) => { ups.set(k, []); downs.set(k, []); };
+  rows.forEach((row) => row.forEach(touch));
+  const edges = [];
+  for (const n of m.nodes) {
+    for (const [c, cls] of [[n.lo, "bdd-lo"], [n.hi, "bdd-hi"]]) {
+      const chain = [n.id];
+      for (let r = rowOf(n.id) + 1; r < rowOf(c); r++) {
+        const k = n.id + cls + r;
+        rows[r].push(k); touch(k); chain.push(k);
+      }
+      chain.push(c);
+      for (let i = 1; i < chain.length; i++) { downs.get(chain[i - 1]).push(chain[i]); ups.get(chain[i]).push(chain[i - 1]); }
+      edges.push({ cls, chain, from: n.id, to: c });
+    }
+  }
+
+  const width = (k) => (typeof k === "string" ? 6 : k < 2 ? BDD_H : Math.max(44, label(k).length * 7.2 + 20));
+  const cx = new Map();
+  const place = (row) => {
+    let x = -(row.reduce((s, k) => s + width(k), 0) + BDD_GAP * (row.length - 1)) / 2;
+    for (const k of row) { cx.set(k, x + width(k) / 2); x += width(k) + BDD_GAP; }
+  };
+  rows.forEach(place);
+  const bary = (k, nb) => {
+    const xs = nb.get(k);
+    return xs.length ? xs.reduce((s, o) => s + cx.get(o), 0) / xs.length : cx.get(k);
+  };
+  const inner = rows.slice(0, -1);   // листья не переставляем
+  for (let pass = 0; pass < 8; pass++) {
+    const down = pass % 2 === 0;
+    for (const row of down ? inner : inner.slice().reverse()) {
+      const key = new Map(row.map((k) => [k, bary(k, down ? ups : downs)]));
+      row.sort((a, b) => key.get(a) - key.get(b));
+      place(row);
+    }
+  }
+
+  // Слева — колонка уровней: имя переменной и её вероятность.
+  const gutter = Math.max(60, ...levels.map((v) => bddVarName(m, v).length * 7 + 16));
+  let minX = Infinity, maxX = -Infinity;
+  for (const [k, x] of cx) { minX = Math.min(minX, x - width(k) / 2); maxX = Math.max(maxX, x + width(k) / 2); }
+  const rowIdx = new Map();
+  rows.forEach((row, r) => row.forEach((k) => rowIdx.set(k, r)));
+  const ox = BDD_PAD + gutter - minX, oy = BDD_PAD + 18;
+  const X = (k) => ox + cx.get(k);
+  const Y = (k) => oy + rowIdx.get(k) * BDD_ROW + BDD_H / 2;
+  const W = ox + maxX + BDD_PAD, H = oy + leafRow * BDD_ROW + BDD_H + BDD_PAD;
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("width", W); svg.setAttribute("height", H);
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const add = (parent, tag, attrs, txt) => {
+    const e = document.createElementNS(SVGNS, tag);
+    for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+    if (txt != null) e.textContent = txt;
+    parent.appendChild(e);
+    return e;
+  };
+
+  levels.forEach((v, r) => {
+    const y = oy + r * BDD_ROW + BDD_H / 2;
+    add(svg, "line", { class: "bdd-level-line", x1: BDD_PAD, x2: W - BDD_PAD, y1: y, y2: y });
+    add(svg, "text", { class: "bdd-level", x: BDD_PAD, y: y - 3 }, bddVarName(m, v));
+    add(svg, "text", { class: "bdd-level p", x: BDD_PAD, y: y + 11 }, "P=" + fmtP(m.vars[v].probability));
+  });
+  // Ветки выходят из узла чуть левее (0) и чуть правее (1) центра, а в
+  // пустых точках касательная вертикальна — линия идёт плавно.
+  for (const { cls, chain, from, to } of edges) {
+    const side = Math.min(10, width(from) / 4) * (cls === "bdd-hi" ? 1 : -1);
+    let d = "";
+    for (let i = 0; i + 1 < chain.length; i++) {
+      const a = chain[i], b = chain[i + 1];
+      const x1 = X(a) + (i === 0 ? side : 0), y1 = Y(a) + (i === 0 ? BDD_H / 2 : 0);
+      const x2 = X(b), y2 = Y(b) - (i + 2 === chain.length ? BDD_H / 2 : 0);
+      const dy = (y2 - y1) / 2;
+      d += (i ? " " : `M${x1},${y1} `) + `C${x1},${y1 + dy} ${x2},${y2 - dy} ${x2},${y2}`;
+    }
+    add(svg, "path", { class: cls, d, "data-from": from, "data-to": to });
+  }
+  add(svg, "text", { class: "bdd-root", x: X(m.root), y: Y(m.root) - BDD_H / 2 - 6 }, "▼ " + bddName(BDD.cur));
+  for (const row of rows) {
+    for (const id of row) {
+      if (typeof id === "string") continue;
+      const n = byId.get(id);
+      const isMod = !!n && m.vars[n.var].module != null;
+      const g = add(svg, "g", { class: "bdd-node" + (id < 2 ? " leaf" : isMod ? " mod" : ""), "data-id": id });
+      const w = width(id), x = X(id), y = Y(id);
+      if (id < 2 || isMod) add(g, "rect", { x: x - w / 2, y: y - BDD_H / 2, width: w, height: BDD_H, rx: id < 2 ? 3 : 6 });
+      else add(g, "ellipse", { cx: x, cy: y, rx: w / 2, ry: BDD_H / 2 });
+      add(g, "text", { x, y }, label(id));
+      let tip;
+      if (id < 2) tip = id ? "лист 1: функция модуля истинна" : "лист 0: функция модуля ложна";
+      else {
+        tip = `${label(id)} — уровень ${n.var + 1}\nP(подфункции от этого узла) = ${fmtP(n.probability)}` +
+          `\nP(${label(id)} = 1) = ${fmtP(m.vars[n.var].probability)}`;
+        if (isMod) {
+          tip += "\nщелчок — открыть диаграмму модуля";
+          g.addEventListener("click", () => { BDD.cur = m.vars[n.var].module; renderBddModule(); });
+        }
+      }
+      add(g, "title", {}, tip);
+    }
+  }
+  return svg;
 }
 
 // ===========================================================================
