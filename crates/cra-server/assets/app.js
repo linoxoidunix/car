@@ -280,7 +280,11 @@ function renderEdges() {
   }
 }
 function edgePath(a, b) {
-  const dy = Math.max(24, Math.abs(b.y - a.y) / 2);
+  // The control-point offset must grow with the horizontal gap too, not just
+  // the vertical one — otherwise a wide, nearly-level edge keeps curving right
+  // up to the endpoint instead of straightening out, so the marker (arrow/dot)
+  // ends up rotated correctly but visually meets the node off-center.
+  const dy = Math.max(24, Math.abs(b.y - a.y) / 2, Math.abs(b.x - a.x) / 3);
   return `M${a.x},${a.y} C${a.x},${a.y + dy} ${b.x},${b.y - dy} ${b.x},${b.y}`;
 }
 
