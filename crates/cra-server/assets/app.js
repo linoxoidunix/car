@@ -268,6 +268,9 @@ function renderEdges() {
     const path = document.createElementNS(SVGNS, "path");
     path.setAttribute("class", "edge" + (e.inverse ? " inverse" : "") + kindCls + (isSel ? " selected" : ""));
     path.setAttribute("d", d);
+    // The visible line lies on top of the hit area, so it must carry the id
+    // too — otherwise a click right on the line would miss the edge.
+    path.dataset.edge = hit.dataset.edge;
     layer.appendChild(path);
 
     // Canonical СФЦ arc badge: & (conjunctive) / ≥1 (disjunctive), + ¬ if inverse.
