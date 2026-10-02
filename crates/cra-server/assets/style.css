@@ -258,8 +258,17 @@ td.num { font-family: var(--mono); text-align: right; white-space: nowrap; }
 .imp-table th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
 .imp-table th.sortable:hover, .imp-table th.on { color: var(--text); }
 .imp-table th.num { text-align: right; }
-/* FV — доля риска: полоска под числом читается быстрее столбца цифр. */
-.imp-table td.bar { background: linear-gradient(to right, var(--bar) var(--w), transparent var(--w)); }
+/* Доля (FV, вклад сечения): полоска под числом читается быстрее столбца цифр. */
+td.bar { background: linear-gradient(to right, var(--bar) var(--w), transparent var(--w)); }
+/* ---- сечения и пути ---- */
+/* Числовые столбцы — по содержимому, остальное место — элементам набора;
+   столбцу доли — ширина под полоску. */
+.sets-table th.num { text-align: right; }
+.sets-table th.num, .sets-table td.num { width: 1%; }
+.sets-table td.bar { min-width: 120px; }
+.sets .orders { margin-top: 2px; }
+.spof { margin: 6px 0 2px; font-size: 12px; }
+.spof.ok { color: var(--ok); }
 .bdd-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 6px; }
 .bdd-tabs button { padding: 2px 8px; font: 12px var(--mono); background: transparent; }
 .bdd-tabs button.on { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
