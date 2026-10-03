@@ -175,12 +175,15 @@ button.pal-node { display: flex; align-items: center; gap: 6px; }
 .node .top-badge { fill: var(--sel); font-size: 9px; }
 .port { fill: var(--panel); stroke: var(--edge); stroke-width: 1.5; cursor: crosshair; }
 .port:hover { fill: var(--accent); }
-.edge { stroke: var(--edge); stroke-width: 2; fill: none; marker-end: url(#arrow); cursor: pointer; }
+.edge { stroke: var(--edge); stroke-width: 2; fill: none; cursor: pointer; }
 .edge.inverse { stroke-dasharray: 5 3; }
 .edge:hover { stroke: var(--accent); }
 .edge.selected { stroke: var(--sel); stroke-width: 3; }
 /* Canonical СФЦ arc kinds: conjunctive (И) ends in a dot, disjunctive (ИЛИ)
-   ends in an arrowhead — not just a color difference. */
+   ends in an arrowhead — not just a color difference. Связь дерева отказов
+   (ни conj, ни disj) идёт без наконечника: кто чей вход, видно по рисунку —
+   линия выходит снизу из входа и входит сверху в элемент. */
+.edge.disj { marker-end: url(#arrow); }
 .edge.conj { stroke: var(--gate-br); marker-end: url(#dot); }
 .edge.conj.selected { stroke: var(--sel); }
 .edge-hit { stroke: transparent; stroke-width: 12; fill: none; cursor: pointer; }
@@ -202,7 +205,8 @@ button.pal-node { display: flex; align-items: center; gap: 6px; }
 .hl .node.selected .body { stroke: var(--sel); }
 .hl .edge, .hl .edge-label { opacity: .3; }
 .hl .edge-label.hl-via { opacity: 1; }
-.hl .edge.hl-via { opacity: 1; stroke: var(--hl); stroke-width: 3; marker-end: url(#arrow-hl); }
+.hl .edge.hl-via { opacity: 1; stroke: var(--hl); stroke-width: 3; }
+.hl .edge.disj.hl-via { marker-end: url(#arrow-hl); }
 .hl .edge.conj.hl-via { marker-end: url(#dot-hl); }
 #arrow-hl path, #dot-hl circle { fill: var(--hl); }
 /* Плашка — вверху холста: вершина (критерий) стоит внизу схемы, и путь к ней

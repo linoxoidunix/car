@@ -153,9 +153,10 @@ button:hover:not(:disabled) { background-color: var(--hover); }
 ## Виды дуг СФЦ
 
 ```css
-.edge          { stroke: var(--edge); stroke-width: 2; marker-end: url(#arrow); }
+.edge          { stroke: var(--edge); stroke-width: 2; }
 .edge.inverse  { stroke-dasharray: 5 3; }
-.edge.conj     { stroke: var(--gate-br); }
+.edge.disj     { marker-end: url(#arrow); }
+.edge.conj     { stroke: var(--gate-br); marker-end: url(#dot); }
 .edge-label.conj { fill: var(--gate-br); }
 .edge-label.disj { fill: var(--accent); }
 ```
@@ -170,6 +171,12 @@ button:hover:not(:disabled) { background-color: var(--hover); }
 намеренное: цветовое кодирование бесполезно при чёрно-белой печати и для людей
 с нарушением цветовосприятия, а пунктир и подпись работают всегда.
 
+Наконечник — тоже признак вида дуги, а не связи вообще: стрелка у
+дизъюнктивной, точка у конъюнктивной. Связь дерева отказов не получает ни
+`disj`, ни `conj` и идёт без наконечника, как принято в деревьях отказов: кто
+чей вход, видно по рисунку — линия выходит снизу из входа и входит сверху в
+элемент. Стрелка там ничего бы не сообщала.
+
 ## Подсветка сечения или пути
 
 ```css
@@ -182,7 +189,8 @@ button:hover:not(:disabled) { background-color: var(--hover); }
 .hl .node.selected .body { stroke: var(--sel); }
 .hl .edge, .hl .edge-label { opacity: .3; }
 .hl .edge-label.hl-via { opacity: 1; }
-.hl .edge.hl-via { opacity: 1; stroke: var(--hl); stroke-width: 3; marker-end: url(#arrow-hl); }
+.hl .edge.hl-via { opacity: 1; stroke: var(--hl); stroke-width: 3; }
+.hl .edge.disj.hl-via { marker-end: url(#arrow-hl); }
 .hl .edge.conj.hl-via { marker-end: url(#dot-hl); }
 #arrow-hl path, #dot-hl circle { fill: var(--hl); }
 ```
