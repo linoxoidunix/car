@@ -251,7 +251,6 @@ function screenToWorld(sx, sy) {
 }
 function nodeById(id) { return graph.nodes.find((n) => n.id === id); }
 function childrenEdges(id) { return graph.edges.filter((e) => e.parent === id); }
-function canHaveInputs(n) { return n.role === "gate" || n.role === "sfc"; }
 // CSS-класс вида узла. Узел СФЦ без собственного элемента (dist = null) —
 // фиктивный: чистая логика, и рисуется он иначе, чем реальный элемент.
 function nodeKind(n) { return n.role + (n.role === "sfc" && !n.dist ? " fictive" : ""); }
@@ -306,14 +305,14 @@ function renderNodes() {
       g.appendChild(b);
     }
 
-    if (canHaveInputs(n)) {
-      const port = document.createElementNS(SVGNS, "circle");
-      port.setAttribute("class", "port");
-      port.setAttribute("cx", NODE_W / 2); port.setAttribute("cy", NODE_H);
-      port.setAttribute("r", 6);
-      port.dataset.port = n.id;
-      g.appendChild(port);
-    }
+    // Порт — выход узла, от него тянут связь. Выход есть у любого узла, в том
+    // числе у события дерева отказов: событие — вход для элемента.
+    const port = document.createElementNS(SVGNS, "circle");
+    port.setAttribute("class", "port");
+    port.setAttribute("cx", NODE_W / 2); port.setAttribute("cy", NODE_H);
+    port.setAttribute("r", 6);
+    port.dataset.port = n.id;
+    g.appendChild(port);
     layer.appendChild(g);
   }
 }
@@ -447,6 +446,22 @@ function addEdge(parent, child) {
   if (graph.kind === "sfc") applyArcStyle(e);
   graph.edges.push(e);
   render();
+}
+// Связь тянули от порта узла `from` и бросили на узел `to`. В СФЦ жест и
+// задаёт направление: `to` принимает сигнал `from`. В дереве отказов вход
+// бывает только у логического элемента, поэтому событие с элементом можно
+// связать в любую сторону — событие всегда станет входом. Между двумя
+// элементами направление по-прежнему задаёт жест.
+function connect(from, to) {
+  if (from === to) return;
+  if (graph.kind === "fault_tree" && nodeById(to).role === "event") {
+    if (nodeById(from).role === "event") {
+      setStatus("два события не связать: вход бывает только у логического элемента", "err"); return;
+    }
+    addEdge(from, to);   // тянули от элемента к событию: событие — его вход
+    return;
+  }
+  addEdge(to, from);
 }
 function applyArcStyle(e) {
   e.conj = arcStyle.conj;
@@ -597,9 +612,9 @@ window.addEventListener("mouseup", (ev) => {
   if (d.mode === "connect") {
     $("temp-layer").textContent = "";
     const nodeG = ev.target.closest && ev.target.closest(".node");
-    // Dragging from X's port and dropping on Y means "Y takes X as an input",
-    // i.e. Y is the consumer (parent) and X is the source (child).
-    if (nodeG) addEdge(nodeG.dataset.id, d.from);
+    // Кто чей вход, решает connect: обычно брошенный узел принимает сигнал
+    // того, от чьего порта тянули.
+    if (nodeG) connect(d.from, nodeG.dataset.id);
   } else if (d.mode === "node") {
     document.querySelectorAll(".node.dragging").forEach((e) => e.classList.remove("dragging"));
     // Клик без движения выделяет узел, с Ctrl или Shift — добавляет или убирает.
