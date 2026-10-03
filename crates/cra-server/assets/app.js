@@ -745,8 +745,8 @@ function renderEdgeInspector(body) {
   const e = edgeByPair(selEdge.parent, selEdge.child);
   if (!e) { selEdge = null; body.innerHTML = '<p class="hint">Связь удалена.</p>'; return; }
   body.appendChild(el("h3", {}, "Связь (дуга)"));
-  body.appendChild(el("div", { class: "meta" }, `${e.child} → ${e.parent}`));
   if (graph.kind === "sfc") {
+    body.appendChild(el("div", { class: "meta" }, `${e.child} → ${e.parent}`));
     body.appendChild(field("Тип дуги", selectEl(
       [["disj", "Дизъюнктивная (ИЛИ)"], ["conj", "Конъюнктивная (И)"]],
       e.conj ? "conj" : "disj", (v) => { e.conj = v === "conj"; render(); renderInspector(); })));
@@ -756,7 +756,8 @@ function renderEdgeInspector(body) {
     body.appendChild(el("p", { class: "meta" },
       "Функция вершины: y = x · И(конъюнктивные) · ИЛИ(дизъюнктивные)."));
   } else {
-    body.appendChild(el("p", { class: "meta" }, "Связь — вход логического элемента."));
+    // Стрелки на связи дерева отказов нет — кто чей вход, называем словами.
+    body.appendChild(el("p", { class: "meta" }, `«${e.child}» — вход элемента «${e.parent}».`));
   }
   const del = el("button", { class: "del" }, "Удалить связь");
   del.onclick = () => deleteEdge(e.parent, e.child);
