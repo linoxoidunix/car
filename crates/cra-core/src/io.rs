@@ -117,8 +117,13 @@ pub enum CriterionInput {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DistInput {
+    /// Постоянная вероятность. Задаётся ровно одно число: вероятность отказа
+    /// `q` или вероятность успеха (безотказной работы) `p` = 1 − q.
     Fixed {
-        q: f64,
+        #[serde(default)]
+        q: Option<f64>,
+        #[serde(default)]
+        p: Option<f64>,
     },
     Exponential {
         lambda: f64,
@@ -316,11 +321,21 @@ pub fn compile(model: &ModelInput) -> Result<System, String> {
 impl DistInput {
     pub fn to_model(&self) -> Result<ReliabilityModel, String> {
         match self {
-            DistInput::Fixed { q } => {
-                if !(0.0..=1.0).contains(q) {
+            DistInput::Fixed { q, p } => {
+                let q = match (q, p) {
+                    (Some(q), None) => *q,
+                    (None, Some(p)) => {
+                        if !(0.0..=1.0).contains(p) {
+                            return Err(format!("fixed p must be in [0,1], got {p}"));
+                        }
+                        1.0 - p
+                    }
+                    _ => return Err("fixed: give exactly one of q (failure) or p (success)".into()),
+                };
+                if !(0.0..=1.0).contains(&q) {
                     return Err(format!("fixed q must be in [0,1], got {q}"));
                 }
-                Ok(ReliabilityModel::Fixed { q: *q })
+                Ok(ReliabilityModel::Fixed { q })
             }
             DistInput::Exponential { lambda, mu } => {
                 check_nonneg("lambda", *lambda)?;

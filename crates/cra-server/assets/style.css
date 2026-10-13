@@ -76,6 +76,9 @@ button:disabled { opacity: .5; cursor: default; }
 .palette hr { width: 100%; border: 0; border-top: 1px solid var(--border); margin: 6px 0; }
 button.pal { width: 100%; text-align: left; padding: 7px 10px; }
 .pal-hint { font-size: 11px; color: var(--muted); line-height: 1.4; }
+/* Галочка в палитре: подпись обычным текстом, сама галочка без полей. */
+.pal-check { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 13px; cursor: pointer; }
+.pal-check input { margin: 0; padding: 0; cursor: pointer; }
 
 /* ---- canvas ---- */
 .canvas-wrap { flex: 1 1 auto; min-width: 0; position: relative; }
