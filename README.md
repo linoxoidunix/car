@@ -44,7 +44,7 @@ The scheme is never processed as one monolithic function:
    (`max_order`, `max_sets`, `cutoff`) bite, the most probable sets are kept.
    Path sets come from the De Morgan dual of the structure.
 
-Basic-event models (`dist.rs`, `markov.rs`): fixed q, exponential
+Basic-event models (`dist.rs`, `markov.rs`): fixed q (or success p = 1 − q), exponential
 (optionally with repair rate `mu`), Weibull, lognormal, normal, uniform,
 gamma, and Markov / **semi-Markov** nodes — pure-exponential chains via
 uniformization (exact CTMC), and chains with non-exponential transition clocks
@@ -193,7 +193,8 @@ expression over node outputs.
 ### Distributions
 
 ```jsonc
-{"type": "fixed", "q": 0.01}
+{"type": "fixed", "q": 0.01}                        // failure probability q
+{"type": "fixed", "p": 0.99}                        // or success probability p = 1 − q
 {"type": "exponential", "lambda": 1e-4}            // + optional "mu" (repair)
 {"type": "weibull", "shape": 2.0, "scale": 1e4}
 {"type": "lognormal", "mu": 7.0, "sigma": 0.5}

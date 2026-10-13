@@ -199,6 +199,39 @@ fn sfc_series_parallel() {
     assert!((cuts.sets[0].probability - 0.1).abs() < 1e-15);
 }
 
+/// Постоянную вероятность можно задать как вероятность успеха p = 1 − q:
+/// та же схема с p = 0.9 даёт тот же ответ, что и с q = 0.1. Задать нужно
+/// ровно одно из двух чисел.
+#[test]
+fn fixed_success_probability_p() {
+    let json = |d1: &str, d3: &str| {
+        format!(
+            r#"{{"model": {{"type": "sfc", "nodes": [
+                {{"id": "n1", "dist": {d1}}},
+                {{"id": "n2", "dist": {{"type": "fixed", "q": 0.1}}}},
+                {{"id": "n3", "dist": {d3}, "inputs": [{{"from": "n1"}}, {{"from": "n2"}}]}}
+              ], "criterion": {{"target": "n3"}}}}}}"#
+        )
+    };
+    let q = r#"{"type": "fixed", "q": 0.1}"#;
+    let p = r#"{"type": "fixed", "p": 0.9}"#;
+    let by_q = run(&json(q, q)).results[0].top_probability;
+    let by_p = run(&json(p, p)).results[0].top_probability;
+    let mixed = run(&json(p, q)).results[0].top_probability;
+    assert!((by_q - 0.891).abs() < 1e-15);
+    assert!((by_p - by_q).abs() < 1e-15);
+    assert!((mixed - by_q).abs() < 1e-15);
+
+    for bad in [
+        r#"{"type": "fixed", "q": 0.1, "p": 0.9}"#,
+        r#"{"type": "fixed"}"#,
+        r#"{"type": "fixed", "p": 1.5}"#,
+    ] {
+        let req: Request = serde_json::from_str(&json(bad, q)).expect("request parses");
+        assert!(cra::analyze_request(&req).is_err(), "{bad} must be rejected");
+    }
+}
+
 /// Semi-Markov node: a single Weibull transition ok->fail must reproduce the
 /// Weibull CDF exactly through the full JSON pipeline.
 #[test]

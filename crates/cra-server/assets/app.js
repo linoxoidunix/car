@@ -12,6 +12,8 @@ const $ = (id) => document.getElementById(id);
 // graph.nodes: { id, x, y, role, op?, k?, dist?, combine?, top? }
 //   role = "event" | "gate"  (дерево)   |  "sfc"  (узел СФЦ / фиктивный)
 //   dist = объект распределения, готовый к отправке (null = фиктивный узел СФЦ)
+// graph.prob: "q" | "p" — в каком виде задавать постоянные вероятности новых
+//   узлов (отказ q или успех p); его же показывает галочка «успех p у всех».
 // graph.edges: { parent, child, inverse?, conj? }
 //   смысл: `child` — это ВХОД для `parent` (ребёнок питает родителя).
 //   рисуем: линия от нижнего порта родителя вниз к ребёнку.
@@ -25,7 +27,7 @@ const NODE_W = 132, NODE_H = 52;
 
 // ---- схема параметров распределений (числовые поля) ----
 const DIST_SCHEMA = {
-  fixed:       [["q", "q (вероятность)", 0.01]],
+  fixed:       [["q", "q (вероятность отказа)", 0.01]],
   exponential: [["lambda", "λ (интенсивность)", 1e-4], ["mu", "μ (ремонт, опц.)", "", true]],
   weibull:     [["shape", "форма (k)", 2], ["scale", "масштаб (λ)", 10000]],
   lognormal:   [["mu", "μ", 7], ["sigma", "σ", 0.5]],
@@ -34,10 +36,33 @@ const DIST_SCHEMA = {
   gamma:       [["shape", "форма", 3], ["rate", "интенсивность", 1e-3]],
 };
 const DIST_NAMES = {
-  fixed: "Постоянная q", exponential: "Экспоненциальное", weibull: "Вейбулла",
+  fixed: "Постоянная вероятность", exponential: "Экспоненциальное", weibull: "Вейбулла",
   lognormal: "Логнормальное", normal: "Нормальное", uniform: "Равномерное",
   gamma: "Гамма", markov: "Марковский узел",
 };
+// Постоянная вероятность задаётся одним числом: вероятностью отказа q или
+// вероятностью успеха p = 1 − q. Какое из двух — решает узел (в dist лежит
+// либо q, либо p), движок понимает оба. Переключение пересчитывает число,
+// поэтому расчёт от него не меняется.
+const PROB_LABEL = { q: "q (вероятность отказа)", p: "p (вероятность успеха)" };
+function probKey(d) { return d.p != null ? "p" : "q"; }
+// 1 − x с округлением до 15 знаков после запятой: 1 − 0.7 даёт
+// 0.30000000000000004, а ждут 0.3.
+function complement(x) { return +(1 - x).toFixed(15); }
+function setProbKey(d, key) {
+  if (!d || d.type !== "fixed" || probKey(d) === key) return;
+  const other = key === "p" ? "q" : "p";
+  d[key] = complement(+d[other]); delete d[other];
+}
+// Новая постоянная вероятность — в том виде, что выбран для схемы.
+function fixedDist(q) { const d = { type: "fixed", q }; setProbKey(d, graph.prob || "q"); return d; }
+// Числовые поля распределения: у постоянной вероятности поле одно, q или p.
+function distFields(d) {
+  if (d.type !== "fixed") return DIST_SCHEMA[d.type];
+  const k = probKey(d);
+  return [[k, PROB_LABEL[k], DIST_SCHEMA.fixed[0][2]]];
+}
+
 // Transition (clock) distributions for Markov / semi-Markov nodes.
 const TR_DIST_SCHEMA = {
   exponential:   [["rate", "λ (интенсивность)", 1e-3]],
@@ -93,7 +118,7 @@ const PALETTE = {
     { label: "XOR", make: () => ({ role: "gate", op: "xor" }) },
   ],
   sfc: [
-    { label: "Узел (элемент)", make: () => ({ role: "sfc", dist: { type: "fixed", q: 0.1 } }) },
+    { label: "Узел (элемент)", make: () => ({ role: "sfc", dist: fixedDist(0.1) }) },
     { label: "Фиктивный узел", make: () => ({ role: "sfc", dist: null }) },
   ],
 };
@@ -134,6 +159,7 @@ function render() {
   $("viewport").setAttribute("transform", `translate(${view.tx},${view.ty}) scale(${view.s})`);
   renderEdges();
   renderNodes();
+  renderProbAll();
   save();
 }
 
@@ -188,7 +214,7 @@ function nodeSubtitle(n) {
 function distShort(d) {
   if (!d) return "фиктивный";
   switch (d.type) {
-    case "fixed": return "q=" + fmtNum(d.q);
+    case "fixed": return probKey(d) + "=" + fmtNum(d[probKey(d)]);
     case "exponential": return "λ=" + fmtNum(d.lambda) + (d.mu != null && d.mu !== "" ? " μ=" + fmtNum(d.mu) : "");
     case "weibull": return "Вейбулл " + fmtNum(d.shape) + "," + fmtNum(d.scale);
     case "lognormal": return "логнорм " + fmtNum(d.mu) + "," + fmtNum(d.sigma);
@@ -467,7 +493,7 @@ function renderInspector() {
   if (n.role === "event" || n.role === "sfc") {
     if (n.role === "sfc") {
       body.appendChild(fieldRow(checkboxEl(!!n.dist, (on) => {
-        n.dist = on ? { type: "fixed", q: 0.1 } : null; renderInspector(); render();
+        n.dist = on ? fixedDist(0.1) : null; renderInspector(); render();
       }), "Есть элемент (не фиктивный)"));
     }
     if (n.dist) buildDistEditor(body, n);
@@ -517,7 +543,13 @@ function buildDistEditor(body, n) {
       n.dist = defaultDist(v); renderInspector(); render();
     })));
   if (n.dist.type === "markov") { buildMarkovEditor(body, n); return; }
-  for (const [key, label, def, opt] of DIST_SCHEMA[n.dist.type]) {
+  if (n.dist.type === "fixed") {
+    body.appendChild(field("Задана как", selectEl(
+      [["q", "Вероятность отказа q"], ["p", "Вероятность успеха p = 1 − q"]], probKey(n.dist), (v) => {
+        setProbKey(n.dist, v); renderInspector(); render();
+      })));
+  }
+  for (const [key, label, def, opt] of distFields(n.dist)) {
     const cur = n.dist[key] != null ? n.dist[key] : "";
     body.appendChild(field(label, inputEl("text", cur, (v) => {
       v = v.trim();
@@ -530,6 +562,7 @@ function buildDistEditor(body, n) {
 function defaultDist(type) {
   if (type === "markov") return { type: "markov", states: ["ok", "fail"],
     transitions: [{ from: "ok", to: "fail", rate: 1e-3 }], failed: ["fail"], steady: false };
+  if (type === "fixed") return fixedDist(DIST_SCHEMA.fixed[0][2]);
   const d = { type };
   for (const [k, , def, opt] of DIST_SCHEMA[type]) if (!opt) d[k] = def;
   return d;
@@ -1050,7 +1083,7 @@ function cleanDist(d) {
     o.failed = d.failed || []; if (d.initial) o.initial = d.initial; if (d.steady) o.steady = true;
     return o;
   }
-  for (const [k, , , opt] of DIST_SCHEMA[d.type]) if (d[k] != null && d[k] !== "") o[k] = +d[k];
+  for (const [k, , , opt] of distFields(d)) if (d[k] != null && d[k] !== "") o[k] = +d[k];
   return o;
 }
 function parseTimes(s) {
@@ -1145,6 +1178,14 @@ function buildPalette() {
   }
 }
 
+// Галочка «успех p у всех»: отмечена — постоянные вероятности схемы задаются
+// как p, снята — как q; «частично» — узлы расходятся с выбором схемы.
+function renderProbAll() {
+  const c = $("prob-all"), key = graph.prob || "q";
+  c.checked = key === "p";
+  c.indeterminate = graph.nodes.some((n) => n.dist && n.dist.type === "fixed" && probKey(n.dist) !== key);
+}
+
 function switchTab(name) {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   $("tab-diagram").classList.toggle("active", name === "diagram");
@@ -1189,6 +1230,9 @@ function requestToGraph(req) {
     const target = m.criterion && (m.criterion.target || m.criterion.node);
     if (target) markTop(g, target);
   }
+  // Схема «в p», если все её постоянные вероятности заданы как p.
+  const fixed = g.nodes.filter((n) => n.dist && n.dist.type === "fixed");
+  g.prob = fixed.length && fixed.every((n) => probKey(n.dist) === "p") ? "p" : "q";
   if (req.times) $("mtime").value = req.times.join(", ");
   else if (req.mission_time != null) $("mtime").value = String(req.mission_time);
   return g;
@@ -1205,7 +1249,13 @@ $("kind").addEventListener("change", () => {
 });
 $("analyze").addEventListener("click", analyze);
 $("fit").addEventListener("click", fitView);
-$("clear").addEventListener("click", () => { if (confirm("Очистить схему?")) { graph = { kind: graph.kind, nodes: [], edges: [] }; seq = 0; select(null); render(); } });
+$("clear").addEventListener("click", () => { if (confirm("Очистить схему?")) { graph = { kind: graph.kind, prob: graph.prob, nodes: [], edges: [] }; seq = 0; select(null); render(); } });
+// Привести все узлы к одному виду вероятности; новые узлы тоже получат его.
+$("prob-all").addEventListener("change", () => {
+  graph.prob = $("prob-all").checked ? "p" : "q";
+  for (const n of graph.nodes) setProbKey(n.dist, graph.prob);
+  renderInspector(); render();
+});
 $("example-ft").addEventListener("click", () => loadExample("fault_tree", "fault_tree"));
 $("example-sfc").addEventListener("click", () => loadExample("sfc", "sfc_bridge"));
 $("from-diagram").addEventListener("click", () => {
